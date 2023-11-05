@@ -1,0 +1,73 @@
+\usepackage{mathtools, amsfonts, amssymb, mathrsfs}
+\usepackage{enumerate,enumitem}
+\usepackage{subcaption}
+\usepackage{color,soul}
+\usepackage{algorithm, algpseudocode, algorithmicx}
+\usepackage{comment}
+\usepackage{xspace}
+\usepackage{mleftright}
+
+\newcommand{\todo}[1]{\hl{\textbf{TODO}: #1}}
+
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+% Number systems
+\newcommand{\Sym}{\mathbb{H}}
+\newcommand{\real}{\mathbb{R}}
+\newcommand{\complex}{\mathbb{C}}
+\newcommand{\field}{\mathbb{K}}
+\newcommand{\onevec}{\mathbb{1}}
+
+% Linear algebra
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\orth}{orth}
+\newcommand{\mat}[1]{\boldsymbol{#1}}
+\renewcommand{\vec}[1]{\boldsymbol{#1}}
+\newcommand{\lowrank}[1]{\mleft\llbracket #1 \mright\rrbracket}
+\newcommand{\norm}[1]{\mleft\| #1 \mright\|}
+\newcommand{\ip}[2]{\mleft\langle #1, \, #2\mright\rangle}
+\DeclareMathOperator{\range}{range}
+\newcommand{\QR}{\textsf{QR}\xspace}
+\newcommand{\LU}{\textsf{LU}\xspace}
+
+% Matrices
+\newcommand{\expmat}[1]{\begin{bmatrix} #1 \end{bmatrix}}
+\newcommand{\twobytwo}[4]{\expmat{#1 & #2 \\ #3 & #4}}
+\newcommand{\twobyone}[2]{\expmat{#1 \\ #2}}
+\newcommand{\onebytwo}[2]{\expmat{#1 & #2}}
+\newcommand{\threebythree}[9]{\expmat{#1 & #2 & #3 \\ #4 & #5 & #6 \\ #7 & #8 & #9}}
+\newcommand{\templatetwobytwo}[1]{\twobytwo{#1_{11}}{#1_{12}}{#1_{21}}{#1_{22}}}
+\newcommand{\Id}{\mathbf{I}}
+
+% Probability
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\expect}{\mathbb{E}}
+\DeclareMathOperator{\prob}{\mathbb{P}}
+\DeclareMathOperator{\Unif}{\textsc{Unif}}
+
+% Asymptotics
+\newcommand{\order}{\mathcal{O}}
+\newcommand{\orderish}{\widetilde{\mathcal{O}}}
+
+% General
+\newcommand{\ENE}[1]{{\color{blue} [\textbf{ENE}: #1]}}
+\DeclareMathOperator*{\argmax}{argmax}
+\DeclareMathOperator*{\argmin}{argmin}
+\newcommand{\set}[1]{\mathsf{#1}}
+\newcommand{\e}{\mathrm{e}}
+\newcommand{\im}{\mathrm{i}}
+\renewcommand{\Re}{\mathrm{Re}}
+\renewcommand{\Im}{\mathrm{Im}}
+\renewcommand{\hat}[1]{\widehat{#1}}
+\renewcommand{\tilde}[1]{\widetilde{#1}}
+\newcommand{\actionbox}[1]{\begin{center} \vspace{0.5pc}
+\fbox{ \begin{minipage}{0.9\textwidth}
+\begin{center}#1\end{center}
+\end{minipage}
+} \vspace{0.5pc}
+\end{center}}
+
+% Specialized notation for this document
+

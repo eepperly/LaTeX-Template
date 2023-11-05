@@ -1,0 +1,38 @@
+\makeatletter
+\def\th@plain{%
+  \thm@notefont{}% same as heading font
+  \itshape % body font
+}
+\def\th@definition{%
+  \thm@notefont{}% same as heading font
+  \normalfont % body font
+}
+\makeatother
+
+\crefname{equation}{}{}
+\crefname{section}{section}{sections}
+\crefname{appendix}{appendix}{appendices}
+\newcommand*{\email}[1]{\href{mailto:#1}{\nolinkurl{#1}} } 
+
+% Theorems
+\declaretheorem[name=Theorem]{theorem}
+\declaretheorem[name=Informal Theorem]{inftheorem}
+\declaretheorem[name=Proposition,numberlike=theorem]{proposition}
+\declaretheorem[name=Fact,numberlike=theorem]{fact}
+\declaretheorem[name=Conjecture,numberlike=theorem]{conjecture}
+\declaretheorem[name=Lemma,numberlike=theorem]{lemma}
+\declaretheorem[name=Corollary,numberlike=theorem]{corollary}
+\newtheorem*{claim}{Claim}
+
+\theoremstyle{remark}
+\declaretheorem[name=Remark,qed={\lower-0.3ex\hbox{$\diamond$}},numberlike=theorem]{remark}
+\declaretheorem[name=Example,qed={\lower-0.3ex\hbox{$\triangleleft$}},numberlike=theorem]{example}
+
+\theoremstyle{definition}
+\declaretheorem[name=Definition,numberlike=theorem]{definition}
+\usepackage{mdframed}
+\newmdtheoremenv{question}{Question}
+
+\numberwithin{equation}{section}
+
+\renewcommand{\qedsymbol}{$\blacksquare$}
