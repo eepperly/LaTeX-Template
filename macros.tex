@@ -6,6 +6,7 @@
 \usepackage{comment}
 \usepackage{xspace}
 \usepackage{mleftright}
+\usepackage[most]{tcolorbox}
 
 \newcommand{\todo}[1]{\hl{\textbf{TODO}: #1}}
 
@@ -62,12 +63,9 @@
 \renewcommand{\Im}{\mathrm{Im}}
 \renewcommand{\hat}[1]{\widehat{#1}}
 \renewcommand{\tilde}[1]{\widetilde{#1}}
-\newcommand{\actionbox}[1]{\begin{center} \vspace{0.5pc}
-\fbox{ \begin{minipage}{0.9\textwidth}
-\begin{center}#1\end{center}
-\end{minipage}
-} \vspace{0.5pc}
-\end{center}}
+\newcommand{\actionbox}[1]{\begin{tcolorbox}[colback=white,colframe=black,width=\columnwidth,boxsep=5pt,arc=4pt]
+    #1
+\end{tcolorbox}}
 
 % Specialized notation for this document
 
