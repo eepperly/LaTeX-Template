@@ -36,3 +36,11 @@
 \numberwithin{equation}{section}
 
 \renewcommand{\qedsymbol}{$\blacksquare$}
+
+\usepackage{titlesec}
+
+\titleformat{\subsection}[runin]
+  {\normalfont\normalsize\scshape\bfseries}{\thesubsection}{0.5em}{}[\textbf{.}]
+
+\titleformat{\subsubsection}[runin]
+  {\normalfont\normalsize\scshape}{\textit{\thesubsubsection}}{0.5em}{}[.]
