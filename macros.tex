@@ -16,6 +16,17 @@
     filecolor=Plum,    % color of file links
     urlcolor=Plum         % color of external links
 }
+% Customize the backref format
+\renewcommand*{\backref}[1]{}
+\renewcommand*{\backrefalt}[4]{%
+	\ifcase #1 %
+	(No citations.)% use this if no citations
+	\or
+	(Cited on page #2.)% use this if only one citation
+	\else
+	(Cited on pages #2.)% use this if multiple citations
+	\fi
+}
 
 \usepackage[most]{tcolorbox}
 
