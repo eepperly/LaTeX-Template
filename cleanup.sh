@@ -8,6 +8,7 @@ rm siam/*.log
 rm siam/*.brf
 rm siam/*.out
 rm siam/*.synctex.gz
+rm siam/*.thm
 
 rm -r general/auto
 rm general/*~
