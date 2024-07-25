@@ -1,0 +1,66 @@
+% SIAM Article Template
+\documentclass[review,hidelinks,onefignum,onetabnum,backref]{siamart220329}
+
+% Information that is shared between the article and the supplement
+% (title and author information, macros, packages, etc.) goes into
+% ex_shared.tex. If there is no supplement, this file can be included
+% directly.
+
+\input{siam_shared}
+
+% Optional PDF information
+\ifpdf
+\hypersetup{
+  pdftitle={},
+  pdfauthor={E. N. Epperly}
+}
+\fi
+
+% The next statement enables references to information in the
+% supplement. See the xr-hyperref package for details.
+
+\externaldocument[][nocite]{siam_supplement}
+
+% FundRef data to be entered by SIAM
+%<funding-group specific-use="FundRef">
+%<award-group>
+%<funding-source>
+%<named-content content-type="funder-name"> 
+%</named-content> 
+%<named-content content-type="funder-identifier"> 
+%</named-content>
+%</funding-source>
+%<award-id> </award-id>
+%</award-group>
+%</funding-group>
+
+\begin{document}
+
+\maketitle
+
+% REQUIRED
+\begin{abstract}
+\end{abstract}
+
+% REQUIRED
+\begin{keywords}
+\end{keywords}
+
+% REQUIRED
+\begin{MSCcodes}
+\end{MSCcodes}
+
+\section{Introduction}
+
+\input{../general/content}
+
+\section*{Acknowledgments}
+
+\appendix
+
+\input{../general/appendix}
+
+\bibliographystyle{siamplain}
+\bibliography{../general/refs}
+
+\end{document}

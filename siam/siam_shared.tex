@@ -1,0 +1,45 @@
+% SIAM Shared Information Template
+% This is information that is shared between the main document and any
+% supplement. If no supplement is required, then this information can
+% be included directly in the main document.
+
+
+% Packages and macros go here
+\input{../general/macros}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\ifpdf
+  \DeclareGraphicsExtensions{.eps,.pdf,.png,.jpg}
+\else
+  \DeclareGraphicsExtensions{.eps}
+\fi
+
+% Add a serial/Oxford comma by default.
+\newcommand{\creflastconjunction}{, and~}
+
+% Used for creating new theorem and remark environments
+\newsiamremark{remark}{Remark}
+\newsiamremark{hypothesis}{Hypothesis}
+\crefname{hypothesis}{Hypothesis}{Hypotheses}
+\newsiamthm{claim}{Claim}
+
+\newcommand{\mytitle}{}
+
+% Sets running headers as well as PDF title and authors
+\headers{\mytitle}{E. N. Epperly}
+
+% Title. If the supplement option is on, then "Supplementary Material"
+% is automatically inserted before the title.
+\title{\mytitle\thanks{Submitted to the editors DATE.
+\funding{}}}
+
+% Authors: full names plus addresses.
+\author{Ethan N. Epperly\thanks{Division of Computing and Mathematical Sciences, California Institute of Technology, Pasadena, CA 91125 USA (\email{eepperly@caltech.edu}, \url{https://ethanepperly.com}).}}
+
+\usepackage{amsopn}
+
+%%% Local Variables: 
+%%% mode:latex
+%%% TeX-master: "siam_article"
+%%% End: 
