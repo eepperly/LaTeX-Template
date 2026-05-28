@@ -7,15 +7,17 @@
 \usepackage{xspace}
 \usepackage{mleftright}
 
+\newcommand{\mytitle}{Paper Title}
+
 % Customize the backref format
 \renewcommand*{\backref}[1]{}
 \renewcommand*{\backrefalt}[4]{%
 	\ifcase #1 %
 	(No citations.)% use this if no citations
 	\or
-	(Cited on page #2.)% use this if only one citation
+	(Cited page~#2.)% use this if only one citation
 	\else
-	(Cited on pages #2.)% use this if multiple citations
+	(Cited pages~#2.)% use this if multiple citations
 	\fi
 }
 
@@ -45,6 +47,8 @@
 \DeclareMathOperator{\range}{range}
 \newcommand{\QR}{\textsf{QR}\xspace}
 \newcommand{\LU}{\textsf{LU}\xspace}
+\newcommand{\evec}{\mathbf{e}}
+\DeclareMathOperator{\rank}{rank}
 
 % Matrices
 \newcommand{\expmat}[1]{\begin{bmatrix} #1 \end{bmatrix}}
@@ -72,9 +76,10 @@
 \newcommand{\ENE}[1]{{\color{blue} [\textbf{ENE}: #1]}}
 \DeclareMathOperator*{\argmax}{argmax}
 \DeclareMathOperator*{\argmin}{argmin}
+\DeclareMathOperator*{\minimize}{minimize}
 \newcommand{\set}[1]{\mathsf{#1}}
 \newcommand{\e}{\mathrm{e}}
-\newcommand{\im}{\mathrm{i}}
+\newcommand{\iu}{\mathrm{i}}
 \renewcommand{\Re}{\mathrm{Re}}
 \renewcommand{\Im}{\mathrm{Im}}
 \renewcommand{\hat}[1]{\widehat{#1}}
@@ -84,3 +89,4 @@
 \end{tcolorbox}}
 
 % Specialized notation for this document
+% (add paper-specific macros here)

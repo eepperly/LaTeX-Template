@@ -4,7 +4,7 @@
 
 \usepackage{amsmath, amsthm, thmtools}
 
-\usepackage{charter}
+\usepackage{fourier}
 \DeclareMathAlphabet{\mathcal}{OMS}{zplm}{m}{n}
 
 \input{extra_macros.tex}
@@ -15,8 +15,8 @@
 
 \input{theoremsetup.tex}
 
-\title{}
-\author{Ethan N. Epperly}
+\title{\mytitle}
+\author{Ethan N. Epperly\thanks{Department of Mathematics, University of California Berkeley (\href{mailto:eepperly@berkeley.edu}{eepperly@berkeley.edu}, \url{https://ethanepperly.com})}}
 \date{\today}
 
 \begin{document}
@@ -29,11 +29,24 @@
 
 \input{content}
 
+\subsection*{Acknowledgements}
+
+\input{acknowledgements}
+
 \appendix
 
 \input{appendix}
 
+\scriptsize
 \bibliographystyle{halpha}
+\let\oldthebibliography=\thebibliography
+\let\endoldthebibliography=\endthebibliography
+\renewenvironment{thebibliography}[1]%
+  {\begin{oldthebibliography}{#1}%
+   \setlength{\itemsep}{2pt}%
+   \setlength{\parskip}{2pt}%
+  }%
+  {\end{oldthebibliography}}
 \bibliography{refs,otherrefs}
 
 \end{document}

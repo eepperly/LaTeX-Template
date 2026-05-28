@@ -15,7 +15,7 @@
 \newcommand*{\email}[1]{\href{mailto:#1}{\nolinkurl{#1}} } 
 
 % Theorems
-\declaretheorem[name=Theorem]{theorem}
+\declaretheorem[name=Theorem,numberwithin=section]{theorem}
 \declaretheorem[name=Informal Theorem]{inftheorem}
 \declaretheorem[name=Proposition,numberlike=theorem]{proposition}
 \declaretheorem[name=Fact,numberlike=theorem]{fact}
@@ -42,5 +42,8 @@
 \titleformat{\subsection}[runin]
   {\normalfont\normalsize\scshape\bfseries}{\thesubsection}{0.5em}{}[\textbf{.}]
 
-\titleformat{\subsubsection}[runin]
+  \titleformat{\subsubsection}[runin]
   {\normalfont\normalsize\scshape}{\textit{\thesubsubsection}}{0.5em}{}[.]
+
+  \titleformat{\paragraph}[runin]
+  {\normalfont\normalsize\bfseries\itshape}{\textit{\theparagraph}}{0.5em}{}[]
