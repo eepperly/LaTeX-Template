@@ -191,50 +191,63 @@ def publication_status(entry):
 
 def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_data):
     """
-    Interactively resolve duplicate titles.
+    Interactively resolve duplicate titles one group at a time.
     Returns the set of entry indices to remove.
     """
     groups = find_duplicate_groups(bib_database.entries)
     indices_to_remove = set()
 
     for group in groups:
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                idx_a, entry_a = group[i]
-                idx_b, entry_b = group[j]
-                id_a = entry_a.get('ID', 'unknown')
-                id_b = entry_b.get('ID', 'unknown')
+        # Skip the whole group if every pair has already been resolved
+        all_resolved = all(
+            make_pair_key(entry_a.get('ID', ''), entry_b.get('ID', '')) in ignored_duplicates
+            for i, (_, entry_a) in enumerate(group)
+            for _, entry_b in group[i + 1:]
+        )
+        if all_resolved:
+            continue
 
-                pair = make_pair_key(id_a, id_b)
-                if pair in ignored_duplicates:
-                    continue  # Already decided to keep both
+        n = len(group)
+        print(f"\n--- Possible {'Duplicate' if n == 2 else f'{n}-way Duplicate'} ---")
+        for k, (_, entry) in enumerate(group, 1):
+            print(f"  [{k}] Key: {entry.get('ID', 'unknown')}")
+            print(f"      Title: {entry.get('title', 'No Title')}")
+            print(f"      Authors: {entry.get('author', 'Unknown')[:80]}")
+            print(f"      Published: {publication_status(entry)}")
 
-                print(f"\n--- Possible Duplicate ---")
-                print(f"  [1] Key: {id_a}")
-                print(f"      Title: {entry_a.get('title', 'No Title')}")
-                print(f"      Authors: {entry_a.get('author', 'Unknown')[:80]}")
-                print(f"      Published: {publication_status(entry_a)}")
-                print(f"  [2] Key: {id_b}")
-                print(f"      Title: {entry_b.get('title', 'No Title')}")
-                print(f"      Authors: {entry_b.get('author', 'Unknown')[:80]}")
-                print(f"      Published: {publication_status(entry_b)}")
+        while True:
+            prompt = (
+                "Keep which? Enter number(s) to keep "
+                f"[1–{n}, comma-separated], or Enter to keep all: "
+            )
+            response = input(prompt).strip()
 
-                while True:
-                    response = input("Keep [1], [2], or [B]oth (default: both)? ").strip().lower()
-                    if response == '1':
-                        indices_to_remove.add(idx_b)
-                        print(f"-> Keeping '{id_a}', removing '{id_b}'.")
-                        break
-                    elif response == '2':
-                        indices_to_remove.add(idx_a)
-                        print(f"-> Keeping '{id_b}', removing '{id_a}'.")
-                        break
-                    elif response in ('b', 'both', ''):
-                        ignored_duplicates.append(pair)
-                        ignore_data['ignored_duplicates'] = ignored_duplicates
-                        save_json_file(ignore_file, ignore_data)
-                        print(f"-> Keeping both. Pair recorded in ignore file.")
-                        break
+            if response == '':
+                # Keep all — record every pair so we never ask again
+                for i in range(n):
+                    for j in range(i + 1, n):
+                        _, entry_a = group[i]
+                        _, entry_b = group[j]
+                        pair = make_pair_key(entry_a.get('ID', ''), entry_b.get('ID', ''))
+                        if pair not in ignored_duplicates:
+                            ignored_duplicates.append(pair)
+                ignore_data['ignored_duplicates'] = ignored_duplicates
+                save_json_file(ignore_file, ignore_data)
+                print("-> Keeping all. Pairs recorded in ignore file.")
+                break
+            else:
+                try:
+                    keep_nums = {int(x.strip()) for x in response.split(',')}
+                    if not all(1 <= num <= n for num in keep_nums):
+                        print(f"Please enter numbers between 1 and {n}.")
+                        continue
+                    for k, (idx, entry) in enumerate(group, 1):
+                        if k not in keep_nums:
+                            indices_to_remove.add(idx)
+                            print(f"-> Removing '{entry.get('ID', 'unknown')}'.")
+                    break
+                except ValueError:
+                    print("Invalid input. Please enter numbers separated by commas.")
 
     return indices_to_remove
 
