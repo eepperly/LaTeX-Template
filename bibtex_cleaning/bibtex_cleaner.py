@@ -10,6 +10,10 @@ import os
 
 RULES_FILE = 'title_rules.json'
 
+# Fields that are arXiv-specific and should be removed when reformatting
+_ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
+                 'number', 'urldate', 'url', 'doi', 'howpublished')
+
 # ==========================================
 # 1. Helper Functions
 # ==========================================
@@ -305,17 +309,26 @@ def process_bibtex(input_file, output_file):
         if entry.get('ENTRYTYPE', '').lower() == 'misc':
             url = entry.get('url', '')
             doi = entry.get('doi', '')
-            if 'arxiv' in url.lower() or 'arxiv' in doi.lower():
-                arxiv_id = extract_arxiv_id(doi) or extract_arxiv_id(url)
+            eprint = entry.get('eprint', '')
+            archiveprefix = entry.get('archiveprefix', '')
+            is_arxiv_misc = (
+                'arxiv' in url.lower() or
+                'arxiv' in doi.lower() or
+                'arxiv' in archiveprefix.lower() or
+                bool(extract_arxiv_id(eprint))
+            )
+            if is_arxiv_misc:
+                arxiv_id = (extract_arxiv_id(eprint) or
+                            extract_arxiv_id(doi) or
+                            extract_arxiv_id(url))
                 if arxiv_id:
                     entry['ENTRYTYPE'] = 'article'
                     entry['journal'] = (
                         f"arXiv preprint \\href{{http://arxiv.org/abs/{arxiv_id}}}"
                         f"{{arXiv:{arxiv_id}}}"
                     )
-                    entry.pop('url', None)
-                    entry.pop('doi', None)
-                    entry.pop('howpublished', None)
+                    for field in _ARXIV_FIELDS:
+                        entry.pop(field, None)
                     arxiv_count += 1
                     is_arxiv = True
 
@@ -323,7 +336,8 @@ def process_bibtex(input_file, output_file):
         if not is_arxiv:
             if 'arxiv' in entry.get('journal', '').lower() or \
                'arxiv' in entry.get('url', '').lower() or \
-               'arxiv' in entry.get('eprint', '').lower():
+               'arxiv' in entry.get('eprint', '').lower() or \
+               'arxiv' in entry.get('archiveprefix', '').lower():
                 is_arxiv = True
 
         # --- A3. ArXiv Journal Reformatting ---
@@ -338,7 +352,7 @@ def process_bibtex(input_file, output_file):
                     f"arXiv preprint \\href{{http://arxiv.org/abs/{arxiv_id}}}"
                     f"{{arXiv:{arxiv_id}}}"
                 )
-                for field in ('eprint', 'primaryclass', 'urldate', 'url', 'howpublished'):
+                for field in _ARXIV_FIELDS:
                     entry.pop(field, None)
                 arxiv_count += 1
 
