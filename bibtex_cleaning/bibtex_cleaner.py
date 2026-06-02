@@ -9,6 +9,8 @@ import json
 import os
 
 RULES_FILE = 'title_rules.json'
+REMOVE_FIELDS_FILE = 'remove_fields.json'
+DEFAULT_REMOVE_FIELDS = ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords']
 
 # Fields that are arXiv-specific and should be removed when reformatting
 _ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
@@ -273,6 +275,15 @@ def process_bibtex(input_file, output_file):
     ignore_file = f"{input_basename}.json"
 
     rules = load_json_file(RULES_FILE, default={})
+
+    if not os.path.exists(REMOVE_FIELDS_FILE):
+        save_json_file(REMOVE_FIELDS_FILE, DEFAULT_REMOVE_FIELDS)
+        print(f"Created '{REMOVE_FIELDS_FILE}' with default fields to remove.")
+    remove_fields = load_json_file(REMOVE_FIELDS_FILE, default=DEFAULT_REMOVE_FIELDS)
+    if not isinstance(remove_fields, list):
+        remove_fields = DEFAULT_REMOVE_FIELDS
+    remove_fields_lower = {f.lower() for f in remove_fields}
+
     ignore_data = load_json_file(ignore_file, default={})
     if not isinstance(ignore_data, dict):
         ignore_data = {}
@@ -305,6 +316,10 @@ def process_bibtex(input_file, output_file):
         # Track if we need to save JSON files after this specific entry
         entry_rules_changed = False
         entry_ignore_changed = False
+
+        # --- 0. Remove Configured Fields ---
+        for key in [k for k in list(entry.keys()) if k.lower() in remove_fields_lower]:
+            del entry[key]
 
         # --- A. Conversion Logic (@misc -> @article) ---
         if entry.get('ENTRYTYPE', '').lower() == 'misc':
