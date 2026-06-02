@@ -319,12 +319,28 @@ def process_bibtex(input_file, output_file):
                     arxiv_count += 1
                     is_arxiv = True
 
-        # --- A2. ArXiv Safety Check ---
+        # --- A2. ArXiv Detection ---
         if not is_arxiv:
             if 'arxiv' in entry.get('journal', '').lower() or \
                'arxiv' in entry.get('url', '').lower() or \
                'arxiv' in entry.get('eprint', '').lower():
                 is_arxiv = True
+
+        # --- A3. ArXiv Journal Reformatting ---
+        # Catches @article entries with a raw arXiv journal string (no \href)
+        # e.g. journal = {arXiv:1911.05858 [cs, math]}
+        if is_arxiv and r'\href' not in entry.get('journal', ''):
+            arxiv_id = (extract_arxiv_id(entry.get('eprint', '')) or
+                        extract_arxiv_id(entry.get('url', '')) or
+                        extract_arxiv_id(entry.get('journal', '')))
+            if arxiv_id:
+                entry['journal'] = (
+                    f"arXiv preprint \\href{{http://arxiv.org/abs/{arxiv_id}}}"
+                    f"{{arXiv:{arxiv_id}}}"
+                )
+                for field in ('eprint', 'primaryclass', 'urldate', 'url', 'howpublished'):
+                    entry.pop(field, None)
+                arxiv_count += 1
 
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
