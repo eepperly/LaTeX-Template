@@ -152,6 +152,43 @@ def make_pair_key(id_a, id_b):
     """Canonical sorted pair for storage in the ignore list."""
     return sorted([id_a, id_b])
 
+def publication_status(entry):
+    """Return a short human-readable string describing where the entry is published."""
+    journal = entry.get('journal', '')
+    booktitle = entry.get('booktitle', '')
+    doi = entry.get('doi', '')
+    eprint = entry.get('eprint', '')
+    url = entry.get('url', '')
+
+    # ArXiv detection
+    is_arxiv = (
+        'arxiv' in journal.lower() or
+        'arxiv' in url.lower() or
+        'arxiv' in eprint.lower()
+    )
+    if is_arxiv:
+        arxiv_id = extract_arxiv_id(eprint) or extract_arxiv_id(url) or extract_arxiv_id(journal)
+        if arxiv_id:
+            return f"arXiv:{arxiv_id}"
+        return "arXiv preprint"
+
+    if journal:
+        status = journal
+        if doi:
+            status += f" (DOI: {doi})"
+        return status
+
+    if booktitle:
+        status = f"In: {booktitle}"
+        if doi:
+            status += f" (DOI: {doi})"
+        return status
+
+    if doi:
+        return f"DOI: {doi}"
+
+    return "No publication info"
+
 def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_data):
     """
     Interactively resolve duplicate titles.
@@ -176,9 +213,11 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
                 print(f"  [1] Key: {id_a}")
                 print(f"      Title: {entry_a.get('title', 'No Title')}")
                 print(f"      Authors: {entry_a.get('author', 'Unknown')[:80]}")
+                print(f"      Published: {publication_status(entry_a)}")
                 print(f"  [2] Key: {id_b}")
                 print(f"      Title: {entry_b.get('title', 'No Title')}")
                 print(f"      Authors: {entry_b.get('author', 'Unknown')[:80]}")
+                print(f"      Published: {publication_status(entry_b)}")
 
                 while True:
                     response = input("Keep [1], [2], or [B]oth (default: both)? ").strip().lower()
