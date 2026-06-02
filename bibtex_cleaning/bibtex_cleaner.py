@@ -278,6 +278,7 @@ def process_bibtex(input_file, output_file):
         ignore_data = {}
     ignored_dois = ignore_data.get('ignored_dois', [])
     ignored_duplicates = ignore_data.get('ignored_duplicates', [])
+    arxiv_versions = ignore_data.get('arxiv_versions', {})
 
     arxiv_count = 0
     doi_count = 0
@@ -356,6 +357,29 @@ def process_bibtex(input_file, output_file):
                     entry.pop(field, None)
                 arxiv_count += 1
 
+        # --- A4. ArXiv Version ---
+        if is_arxiv and r'\href' in entry.get('journal', ''):
+            if entry_id in arxiv_versions:
+                version = arxiv_versions[entry_id]
+            else:
+                print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
+                version = input("arXiv version (e.g. 2, or press Enter to leave unversioned): ").strip()
+                if version.lower().startswith('v'):
+                    version = version[1:]  # store bare number
+                arxiv_versions[entry_id] = version
+                entry_ignore_changed = True
+
+            if version:
+                # Reconstruct journal with versioned ID
+                id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
+                if id_match:
+                    base_id = id_match.group(1)
+                    vid = f"{base_id}v{version}"
+                    entry['journal'] = (
+                        f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                        f"{{arXiv:{vid}}}"
+                    )
+
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
             if entry_id not in ignored_dois:
@@ -417,6 +441,7 @@ def process_bibtex(input_file, output_file):
             save_json_file(RULES_FILE, rules)
             ignore_data['ignored_dois'] = ignored_dois
             ignore_data['ignored_duplicates'] = ignored_duplicates
+            ignore_data['arxiv_versions'] = arxiv_versions
             save_json_file(ignore_file, ignore_data)
 
     # Save final bibliography
