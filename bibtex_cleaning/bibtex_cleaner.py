@@ -8,8 +8,10 @@ import sys
 import json
 import os
 
-RULES_FILE = 'title_rules.json'
-REMOVE_FIELDS_FILE = 'remove_fields.json'
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+RULES_FILE = os.path.join(_SCRIPT_DIR, 'title_rules.json')
+REMOVE_FIELDS_FILE = os.path.join(_SCRIPT_DIR, 'remove_fields.json')
 DEFAULT_REMOVE_FIELDS = ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords']
 
 # Fields that are arXiv-specific and should be removed when reformatting
@@ -272,7 +274,8 @@ def process_bibtex(input_file, output_file):
 
     # Generate a dynamic ignore file name based on the input file
     input_basename = os.path.splitext(os.path.basename(input_file))[0]
-    ignore_file = f"{input_basename}.json"
+    input_dir = os.path.dirname(os.path.abspath(input_file))
+    ignore_file = os.path.join(input_dir, f"{input_basename}.json")
 
     rules = load_json_file(RULES_FILE, default={})
 
