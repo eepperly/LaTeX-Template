@@ -258,12 +258,12 @@ def process_bibtex(input_file, bold_name):
             if block:
                 blocks.append(block)
 
-        print('\n\n\n'.join(blocks))
+        print('\\cvsection{Publication List}\n\n\n' + '\n\n\n'.join(blocks))
     else:
         # No section structure — flat list
         block = render_section(None, bib.entries, bold_name)
         if block:
-            print(block)
+            print('\\cvsection{Publication List}\n\n\n' + block)
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(
