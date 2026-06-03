@@ -194,7 +194,14 @@ def format_entry(entry, bold_name=DEFAULT_BOLD_NAME):
     # Title is a hyperlink when a URL is available
     title_latex = f'\\href{{{link_url}}}{{{title}}}' if link_url else title
 
-    return f'\\cvpub{{{authors} ({year}). {title_latex}. {venue}.}}'
+    # For published papers that also have an arXiv eprint, append a preprint link
+    preprint = ''
+    if not detect_arxiv(entry):
+        eprint = entry.get('eprint', '').strip()
+        if eprint:
+            preprint = f'  (\\href{{http://arxiv.org/abs/{eprint}}}{{preprint}})'
+
+    return f'\\cvpub{{{authors} ({year}). {title_latex}. {venue}.{preprint}}}'
 
 # ==========================================
 # 4. Main
