@@ -111,7 +111,7 @@ def format_authors(author_field, bold_name=DEFAULT_BOLD_NAME):
 def detect_arxiv(entry):
     return any(
         'arxiv' in entry.get(f, '').lower()
-        for f in ('journal', 'url', 'eprint', 'archiveprefix')
+        for f in ('journal', 'url')
     )
 
 def clean_title(title):
@@ -199,7 +199,7 @@ def format_entry(entry, bold_name=DEFAULT_BOLD_NAME):
     if not detect_arxiv(entry):
         eprint = entry.get('eprint', '').strip()
         if eprint:
-            preprint = f'  (\\href{{http://arxiv.org/abs/{eprint}}}{{preprint}})'
+            preprint = f' (\\href{{https://arxiv.org/abs/{eprint}}}{{preprint}})'
 
     return f'\\cvpub{{{authors} ({year}). {title_latex}. {venue}.{preprint}}}'
 
