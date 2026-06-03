@@ -127,13 +127,40 @@ def format_doi_link(doi):
     doi = re.sub(r'https?://(dx\.)?doi\.org/', '', doi, flags=re.IGNORECASE).strip()
     return f'doi:\\href{{https://doi.org/{doi}}}{{{doi}}}'
 
+def _doi_str(entry):
+    doi = entry.get('doi', '').strip()
+    return f'  {format_doi_link(doi)}' if doi else ''
+
 def format_venue(entry):
     """Return (venue_str, doi_str). doi_str is '' when there is no DOI."""
+    etype = entry.get('ENTRYTYPE', '').lower()
+
     if detect_arxiv(entry):
         # Journal field is already formatted by bibtex_cleaner, e.g.:
         #   arXiv preprint \href{http://arxiv.org/abs/2304.12465v2}{arXiv:2304.12465v2}
         return entry.get('journal', 'arXiv preprint'), ''
 
+    if etype == 'phdthesis':
+        type_str = entry.get('type', 'PhD dissertation')
+        school   = entry.get('school', '')
+        venue    = f'{type_str}, {school}' if school else type_str
+        return venue, _doi_str(entry)
+
+    if etype == 'mastersthesis':
+        type_str = entry.get('type', "Master's thesis")
+        school   = entry.get('school', '')
+        venue    = f'{type_str}, {school}' if school else type_str
+        return venue, _doi_str(entry)
+
+    if etype == 'techreport':
+        type_str    = entry.get('type', 'Technical report')
+        number      = entry.get('number', '')
+        institution = entry.get('institution', '')
+        type_str    = f'{type_str} {number}' if number else type_str
+        venue       = f'{type_str}, {institution}' if institution else type_str
+        return venue, _doi_str(entry)
+
+    # Journal article, conference paper, book chapter, etc.
     journal = entry.get('journal', entry.get('booktitle', ''))
     volume  = entry.get('volume', '')
     pages   = entry.get('pages', '')
@@ -144,10 +171,7 @@ def format_venue(entry):
     if pages:
         venue += f', {pages}'
 
-    doi = entry.get('doi', '').strip()
-    doi_str = f'  {format_doi_link(doi)}' if doi else ''
-
-    return venue, doi_str
+    return venue, _doi_str(entry)
 
 # ==========================================
 # 3. Entry Formatting
