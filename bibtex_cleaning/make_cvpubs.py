@@ -123,34 +123,41 @@ def clean_title(title):
         t = re.sub(r'\{([^{}]*)\}', r'\1', t)
     return t.strip().rstrip('.')
 
-def format_doi_link(doi):
-    doi = re.sub(r'https?://(dx\.)?doi\.org/', '', doi, flags=re.IGNORECASE).strip()
-    return f'doi:\\href{{https://doi.org/{doi}}}{{{doi}}}'
+def _entry_link_url(entry):
+    """Return the canonical URL for an entry (DOI preferred, then URL field)."""
+    doi = re.sub(r'https?://(dx\.)?doi\.org/', '', entry.get('doi', ''),
+                 flags=re.IGNORECASE).strip()
+    if doi:
+        return f'https://doi.org/{doi}'
+    return entry.get('url', '').strip()
 
-def _doi_str(entry):
-    doi = entry.get('doi', '').strip()
-    return f'  {format_doi_link(doi)}' if doi else ''
+def _arxiv_url(journal_field):
+    """Extract the URL from a \\href{url}{...} in the journal field."""
+    m = re.search(r'\\href\{([^}]+)\}', journal_field)
+    return m.group(1) if m else ''
 
 def format_venue(entry):
-    """Return (venue_str, doi_str). doi_str is '' when there is no DOI."""
+    """Return (venue_str, link_url) where link_url is used to hyperlink the title."""
     etype = entry.get('ENTRYTYPE', '').lower()
 
     if detect_arxiv(entry):
-        # Journal field is already formatted by bibtex_cleaner, e.g.:
+        # Journal field already formatted by bibtex_cleaner, e.g.:
         #   arXiv preprint \href{http://arxiv.org/abs/2304.12465v2}{arXiv:2304.12465v2}
-        return entry.get('journal', 'arXiv preprint'), ''
+        # The arXiv number is already a hyperlink; we also want the title linked.
+        journal = entry.get('journal', 'arXiv preprint')
+        return journal, _arxiv_url(journal)
 
     if etype == 'phdthesis':
         type_str = entry.get('type', 'PhD dissertation')
         school   = entry.get('school', '')
         venue    = f'{type_str}, {school}' if school else type_str
-        return venue, _doi_str(entry)
+        return venue, _entry_link_url(entry)
 
     if etype == 'mastersthesis':
         type_str = entry.get('type', "Master's thesis")
         school   = entry.get('school', '')
         venue    = f'{type_str}, {school}' if school else type_str
-        return venue, _doi_str(entry)
+        return venue, _entry_link_url(entry)
 
     if etype == 'techreport':
         type_str    = entry.get('type', 'Technical report')
@@ -158,7 +165,7 @@ def format_venue(entry):
         institution = entry.get('institution', '')
         type_str    = f'{type_str} {number}' if number else type_str
         venue       = f'{type_str}, {institution}' if institution else type_str
-        return venue, _doi_str(entry)
+        return venue, _entry_link_url(entry)
 
     # Journal article, conference paper, book chapter, etc.
     journal = entry.get('journal', entry.get('booktitle', ''))
@@ -171,7 +178,7 @@ def format_venue(entry):
     if pages:
         venue += f', {pages}'
 
-    return venue, _doi_str(entry)
+    return venue, _entry_link_url(entry)
 
 # ==========================================
 # 3. Entry Formatting
@@ -179,12 +186,15 @@ def format_venue(entry):
 
 def format_entry(entry, bold_name=DEFAULT_BOLD_NAME):
     """Format a single BibTeX entry as a \\cvpub{} line."""
-    authors = format_authors(entry.get('author', ''), bold_name)
-    year    = entry.get('year', '')
-    title   = clean_title(entry.get('title', ''))
-    venue, doi_str = format_venue(entry)
+    authors  = format_authors(entry.get('author', ''), bold_name)
+    year     = entry.get('year', '')
+    title    = clean_title(entry.get('title', ''))
+    venue, link_url = format_venue(entry)
 
-    return f'\\cvpub{{{authors} ({year}). {title}. {venue}.{doi_str}}}'
+    # Title is a hyperlink when a URL is available
+    title_latex = f'\\href{{{link_url}}}{{{title}}}' if link_url else title
+
+    return f'\\cvpub{{{authors} ({year}). {title_latex}. {venue}.}}'
 
 # ==========================================
 # 4. Main
