@@ -2,6 +2,7 @@
 
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
+from bibtexparser.bibdatabase import BibDatabase
 import re
 import argparse
 import sys
@@ -21,6 +22,34 @@ _ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
 # ==========================================
 # 1. Helper Functions
 # ==========================================
+
+_SECTION_RE = re.compile(r'^%%%\s+(.+)$')
+_ENTRY_KEY_RE = re.compile(r'^@(?!string\b|comment\b|preamble\b)\w+\s*\{([^,\s\}]+)', re.IGNORECASE)
+
+def parse_sections(filepath):
+    """
+    Scan a .bib file for %%% section comments and return an ordered list of
+    (section_name_or_None, [entry_key, ...]) tuples preserving file order.
+    """
+    sections = []
+    current_name = None
+    current_keys = []
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.rstrip()
+            m = _SECTION_RE.match(line)
+            if m:
+                sections.append((current_name, current_keys))
+                current_name = m.group(1).strip()
+                current_keys = []
+            else:
+                m = _ENTRY_KEY_RE.match(line)
+                if m:
+                    current_keys.append(m.group(1))
+
+    sections.append((current_name, current_keys))
+    return [(n, ks) for n, ks in sections if n is not None or ks]
 
 def load_json_file(filename, default=None):
     if default is None:
@@ -265,6 +294,7 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 
 def process_bibtex(input_file, output_file):
     try:
+        sections = parse_sections(input_file)
         with open(input_file, 'r', encoding='utf-8') as bibtex_file:
             parser = bibtexparser.bparser.BibTexParser(common_strings=True)
             bib_database = bibtexparser.load(bibtex_file, parser=parser)
@@ -462,11 +492,36 @@ def process_bibtex(input_file, output_file):
             ignore_data['arxiv_versions'] = arxiv_versions
             save_json_file(ignore_file, ignore_data)
 
-    # Save final bibliography
+    # Save final bibliography, preserving %%% section comments
     writer = BibTexWriter()
     writer.indent = '  '
+    entry_dict = {e['ID']: e for e in bib_database.entries}
+
+    def render_entry(e):
+        tmp = BibDatabase()
+        tmp.entries = [e]
+        return writer.write(tmp).strip()
+
+    chunks = []
+    written = set()
+
+    for section_name, keys in sections:
+        section_entries = [entry_dict[k] for k in keys if k in entry_dict]
+        if not section_entries:
+            continue
+        if section_name is not None:
+            chunks.append(f'%%% {section_name}')
+        for e in section_entries:
+            chunks.append(render_entry(e))
+            written.add(e['ID'])
+
+    # Append any entries not captured by a section
+    for e in bib_database.entries:
+        if e['ID'] not in written:
+            chunks.append(render_entry(e))
+
     with open(output_file, 'w', encoding='utf-8') as bibtex_file:
-        bibtex_file.write(writer.write(bib_database))
+        bibtex_file.write('\n\n'.join(chunks) + '\n')
 
     print(f"\nDone! Output saved to: {output_file}")
     print(f"Title rules are safely stored in '{RULES_FILE}'.")

@@ -19,6 +19,38 @@ import sys
 DEFAULT_BOLD_NAME = 'Epperly'
 
 # ==========================================
+# 0. Section Parsing
+# ==========================================
+
+_SECTION_RE  = re.compile(r'^%%%\s+(.+)$')
+_ENTRY_KEY_RE = re.compile(r'^@(?!string\b|comment\b|preamble\b)\w+\s*\{([^,\s\}]+)', re.IGNORECASE)
+
+def parse_sections(filepath):
+    """
+    Scan a .bib file for %%% section comments and return an ordered list of
+    (section_name_or_None, [entry_key, ...]) tuples preserving file order.
+    """
+    sections = []
+    current_name = None
+    current_keys = []
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.rstrip()
+            m = _SECTION_RE.match(line)
+            if m:
+                sections.append((current_name, current_keys))
+                current_name = m.group(1).strip()
+                current_keys = []
+            else:
+                m = _ENTRY_KEY_RE.match(line)
+                if m:
+                    current_keys.append(m.group(1))
+
+    sections.append((current_name, current_keys))
+    return [(n, ks) for n, ks in sections if n is not None or ks]
+
+# ==========================================
 # 1. Author Formatting
 # ==========================================
 
@@ -140,25 +172,64 @@ def sort_key(entry):
     except ValueError:
         return 0
 
+_SECTION_DIVIDER = '%---------------------------------------------------------'
+
+def render_section(section_name, entries, bold_name):
+    """Return the LaTeX block for one section."""
+    pub_lines = []
+    for entry in sorted(entries, key=sort_key):
+        try:
+            pub_lines.append(format_entry(entry, bold_name))
+        except Exception as exc:
+            key = entry.get('ID', 'unknown')
+            print(f"Warning: skipping '{key}': {exc}", file=sys.stderr)
+
+    if not pub_lines:
+        return None
+
+    inner = '\n\n'.join(pub_lines)
+    body = f'\\begin{{cvpubs}}\n{inner}\n\\end{{cvpubs}}'
+
+    if section_name is not None:
+        return f'\\cvsubsection{{{section_name}}}\n{_SECTION_DIVIDER}\n\n{body}'
+    else:
+        return body
+
 def process_bibtex(input_file, bold_name):
     try:
+        sections = parse_sections(input_file)
         with open(input_file, 'r', encoding='utf-8') as f:
             bib = bibtexparser.load(f, BibTexParser(common_strings=True))
     except FileNotFoundError:
         print(f"Error: '{input_file}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    entries = sorted(bib.entries, key=sort_key)  # stable: same-year order preserved
+    entry_dict = {e['ID']: e for e in bib.entries}
 
-    lines = []
-    for entry in entries:
-        try:
-            lines.append(format_entry(entry, bold_name))
-        except Exception as exc:
-            key = entry.get('ID', 'unknown')
-            print(f"Warning: skipping '{key}': {exc}", file=sys.stderr)
+    if sections:
+        blocks = []
+        rendered_keys = set()
 
-    print('\n\n'.join(lines))
+        for section_name, keys in sections:
+            entries = [entry_dict[k] for k in keys if k in entry_dict]
+            rendered_keys.update(k for k in keys if k in entry_dict)
+            block = render_section(section_name, entries, bold_name)
+            if block:
+                blocks.append(block)
+
+        # Append any entries not captured by a section
+        leftover = [e for e in bib.entries if e['ID'] not in rendered_keys]
+        if leftover:
+            block = render_section(None, leftover, bold_name)
+            if block:
+                blocks.append(block)
+
+        print('\n\n\n'.join(blocks))
+    else:
+        # No section structure — flat list
+        block = render_section(None, bib.entries, bold_name)
+        if block:
+            print(block)
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(
