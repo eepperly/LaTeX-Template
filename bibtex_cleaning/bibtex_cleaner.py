@@ -72,6 +72,34 @@ def extract_arxiv_id(text):
     match = re.search(pattern, text)
     return match.group(1) if match else None
 
+def read_bibtex_paste(first_line):
+    """
+    Collect a multi-line BibTeX entry from stdin.
+    first_line is the line already read that starts with '@'.
+    Reads until the top-level braces are balanced, then returns the full string.
+    """
+    lines = [first_line]
+    depth = first_line.count('{') - first_line.count('}')
+    while depth > 0:
+        try:
+            line = input()
+        except EOFError:
+            break
+        lines.append(line)
+        depth += line.count('{') - line.count('}')
+    return '\n'.join(lines)
+
+def parse_bibtex_entry(raw_text):
+    """Parse a raw BibTeX string and return the first entry as a dict, or None."""
+    try:
+        parser = bibtexparser.bparser.BibTexParser(common_strings=True)
+        db = bibtexparser.loads(raw_text, parser)
+        if db.entries:
+            return db.entries[0]
+    except Exception:
+        pass
+    return None
+
 def clean_doi_value(doi_text):
     # Removes https://doi.org/ prefixes
     return re.sub(r'https?://(dx\.)?doi\.org/', '', doi_text, flags=re.IGNORECASE).strip()
@@ -229,10 +257,12 @@ def publication_status(entry):
 def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_data):
     """
     Interactively resolve duplicate titles one group at a time.
-    Returns the set of entry indices to remove.
+    Returns (indices_to_remove, kept_to_removed) where kept_to_removed maps
+    the first kept entry ID to a list of removed entry IDs.
     """
     groups = find_duplicate_groups(bib_database.entries)
     indices_to_remove = set()
+    kept_to_removed = {}  # kept_id -> [removed_id, ...]
 
     for group in groups:
         # Skip the whole group if every pair has already been resolved
@@ -278,21 +308,29 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
                     if not all(1 <= num <= n for num in keep_nums):
                         print(f"Please enter numbers between 1 and {n}.")
                         continue
+                    kept_ids = []
+                    removed_ids = []
                     for k, (idx, entry) in enumerate(group, 1):
+                        eid = entry.get('ID', 'unknown')
                         if k not in keep_nums:
                             indices_to_remove.add(idx)
-                            print(f"-> Removing '{entry.get('ID', 'unknown')}'.")
+                            removed_ids.append(eid)
+                            print(f"-> Removing '{eid}'.")
+                        else:
+                            kept_ids.append(eid)
+                    if removed_ids and kept_ids:
+                        kept_to_removed[kept_ids[0]] = removed_ids
                     break
                 except ValueError:
                     print("Invalid input. Please enter numbers separated by commas.")
 
-    return indices_to_remove
+    return indices_to_remove, kept_to_removed
 
 # ==========================================
 # 5. Main Processing Loop
 # ==========================================
 
-def process_bibtex(input_file, output_file):
+def process_bibtex(input_file, output_file, dupes_file=None):
     try:
         sections = parse_sections(input_file)
         with open(input_file, 'r', encoding='utf-8') as bibtex_file:
@@ -323,6 +361,7 @@ def process_bibtex(input_file, output_file):
     ignored_dois = ignore_data.get('ignored_dois', [])
     ignored_duplicates = ignore_data.get('ignored_duplicates', [])
     arxiv_versions = ignore_data.get('arxiv_versions', {})
+    published_entries = ignore_data.get('published_entries', {})
 
     arxiv_count = 0
     doi_count = 0
@@ -330,7 +369,7 @@ def process_bibtex(input_file, output_file):
 
     # --- Pre-pass: Deduplication ---
     print("Checking for duplicate titles...")
-    indices_to_remove = deduplicate_entries(
+    indices_to_remove, kept_to_removed = deduplicate_entries(
         bib_database, ignored_duplicates, ignore_file, ignore_data
     )
     if indices_to_remove:
@@ -339,6 +378,16 @@ def process_bibtex(input_file, output_file):
             if i not in indices_to_remove
         ]
         print(f"Removed {len(indices_to_remove)} duplicate(s).")
+
+    if kept_to_removed:
+        out = dupes_file or os.path.join(
+            os.path.dirname(os.path.abspath(input_file)),
+            os.path.splitext(os.path.basename(input_file))[0] + '_duplicates.txt'
+        )
+        with open(out, 'w', encoding='utf-8') as f:
+            for kept, dups in kept_to_removed.items():
+                f.write(f"{kept}: {', '.join(dups)}\n")
+        print(f"Duplicate log written to: {out}")
 
     print("Scanning bibliography...")
 
@@ -405,28 +454,67 @@ def process_bibtex(input_file, output_file):
                     entry.pop(field, None)
                 arxiv_count += 1
 
-        # --- A4. ArXiv Version ---
+        # --- A4. ArXiv Version / Published Update ---
         if is_arxiv and r'\href' in entry.get('journal', ''):
-            if entry_id in arxiv_versions:
+            if entry_id in published_entries:
+                # Restore saved published fields, preserving the original key
+                saved = published_entries[entry_id]
+                entry.clear()
+                entry.update(saved)
+                entry['ID'] = entry_id
+                is_arxiv = False
+            elif entry_id in arxiv_versions:
                 version = arxiv_versions[entry_id]
+                if version:
+                    id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
+                    if id_match:
+                        base_id = id_match.group(1)
+                        vid = f"{base_id}v{version}"
+                        entry['journal'] = (
+                            f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                            f"{{arXiv:{vid}}}"
+                        )
             else:
                 print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
-                version = input("arXiv version (e.g. 2, or press Enter to leave unversioned): ").strip()
-                if version.lower().startswith('v'):
-                    version = version[1:]  # store bare number
-                arxiv_versions[entry_id] = version
-                entry_ignore_changed = True
+                print("Options: enter an arXiv version number (e.g. 2), paste a BibTeX entry")
+                print("for the published version (starting with '@'), or press Enter to leave unversioned.")
+                first_line = input("> ").strip()
 
-            if version:
-                # Reconstruct journal with versioned ID
-                id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
-                if id_match:
-                    base_id = id_match.group(1)
-                    vid = f"{base_id}v{version}"
-                    entry['journal'] = (
-                        f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
-                        f"{{arXiv:{vid}}}"
-                    )
+                if first_line.startswith('@'):
+                    # User is pasting a published BibTeX entry
+                    raw = read_bibtex_paste(first_line)
+                    parsed = parse_bibtex_entry(raw)
+                    if parsed:
+                        parsed['ID'] = entry_id
+                        entry.clear()
+                        entry.update(parsed)
+                        is_arxiv = False
+                        # Save all fields except ID (we always override ID on restore)
+                        to_save = {k: v for k, v in parsed.items() if k != 'ID'}
+                        published_entries[entry_id] = to_save
+                        ignore_data['published_entries'] = published_entries
+                        entry_ignore_changed = True
+                        print(f"-> Updated '{entry_id}' to published version.")
+                    else:
+                        print("-> Could not parse BibTeX entry; leaving as arXiv.")
+                        arxiv_versions[entry_id] = ''
+                        ignore_data['arxiv_versions'] = arxiv_versions
+                        entry_ignore_changed = True
+                else:
+                    version = first_line
+                    if version.lower().startswith('v'):
+                        version = version[1:]
+                    arxiv_versions[entry_id] = version
+                    entry_ignore_changed = True
+                    if version:
+                        id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
+                        if id_match:
+                            base_id = id_match.group(1)
+                            vid = f"{base_id}v{version}"
+                            entry['journal'] = (
+                                f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                                f"{{arXiv:{vid}}}"
+                            )
 
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
@@ -490,6 +578,7 @@ def process_bibtex(input_file, output_file):
             ignore_data['ignored_dois'] = ignored_dois
             ignore_data['ignored_duplicates'] = ignored_duplicates
             ignore_data['arxiv_versions'] = arxiv_versions
+            ignore_data['published_entries'] = published_entries
             save_json_file(ignore_file, ignore_data)
 
     # Save final bibliography, preserving %%% section comments
@@ -532,7 +621,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('input', help='Input bib file')
     parser.add_argument('output', nargs='?', help='Output bib file')
+    parser.add_argument('--dupes', metavar='FILE', help='File to write duplicate log (default: <input>_duplicates.txt)')
     args = parser.parse_args()
 
     out_path = args.output if args.output else 'clean_output.bib'
-    process_bibtex(args.input, out_path)
+    process_bibtex(args.input, out_path, dupes_file=args.dupes)
