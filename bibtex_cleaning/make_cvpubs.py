@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 """
-make_cvpubs.py — Convert a BibTeX file to \cvpub{} entries for a LaTeX CV.
+make_cvpubs.py — Convert a BibTeX file to \\cvpub{} entries for a LaTeX CV,
+                 and optionally a Markdown numbered list for a website.
 
 Usage:
     python make_cvpubs.py refs.bib
-    python make_cvpubs.py refs.bib --bold Webber   # bold a different name
-    python make_cvpubs.py refs.bib > cvpubs.tex    # redirect to file
+    python make_cvpubs.py refs.bib --bold Webber        # bold a different name
+    python make_cvpubs.py refs.bib > cvpubs.tex         # redirect to file
+    python make_cvpubs.py refs.bib --markdown pubs.md   # also write Markdown
 
 Output is sorted reverse-chronologically (newest first) and written to stdout.
 """
@@ -77,10 +79,21 @@ def initial(part):
     clean = re.sub(r'[{}]', '', part).strip()
     return clean[0].upper() if clean else ''
 
-def format_one_author(first_parts, last):
-    """Format a single author as E.\\ N.\\ Last."""
+def format_one_author(first_parts, last, sep='\\ '):
+    """Format a single author as 'E.\\ N.\\ Last' (LaTeX) or 'E. N. Last' (Markdown)."""
     initials = [c for c in (initial(p) for p in first_parts) if c]
-    return ''.join(f'{c}.\\ ' for c in initials) + last
+    return ''.join(f'{c}.{sep}' for c in initials) + last
+
+def _join_authors(formatted, ampersand):
+    n = len(formatted)
+    if n == 0:
+        return ''
+    elif n == 1:
+        return formatted[0]
+    elif n == 2:
+        return f'{formatted[0]} {ampersand} {formatted[1]}'
+    else:
+        return ', '.join(formatted[:-1]) + f', {ampersand} ' + formatted[-1]
 
 def format_authors(author_field, bold_name=DEFAULT_BOLD_NAME):
     """Format a full BibTeX author field for a LaTeX CV."""
@@ -88,21 +101,61 @@ def format_authors(author_field, bold_name=DEFAULT_BOLD_NAME):
     formatted = []
     for raw in raw_list:
         first_parts, last = parse_author(raw)
-        name = format_one_author(first_parts, last)
+        name = format_one_author(first_parts, last, sep='\\ ')
         if last.lower() == bold_name.lower():
             name = f'\\textbf{{{name}}}'
         formatted.append(name)
+    return _join_authors(formatted, '\\&')
 
-    n = len(formatted)
-    if n == 0:
-        return ''
-    elif n == 1:
-        return formatted[0]
-    elif n == 2:
-        return f'{formatted[0]} \\& {formatted[1]}'
-    else:
-        # Oxford comma: A, B, \& C
-        return ', '.join(formatted[:-1]) + ', \\& ' + formatted[-1]
+_ACCENT_MAP = {
+    "'": '́', '`': '̀', '^': '̂', '"': '̈',
+    '~': '̃', '=': '̄', '.': '̇', 'c': '̧',
+    'v': '̌', 'u': '̆', 'H': '̋',
+}
+
+def _replace_accent(m):
+    cmd, char = m.group(1), m.group(2)
+    combining = _ACCENT_MAP.get(cmd)
+    if combining:
+        import unicodedata
+        return unicodedata.normalize('NFC', char + combining)
+    return char
+
+def _latex_to_md(text):
+    """Convert LaTeX markup in a string to Markdown equivalents."""
+    # \href{url}{text} -> [text](url)  (must happen before brace stripping)
+    text = re.sub(r'\\href\{([^}]+)\}\{([^}]+)\}', r'[\2](\1)', text)
+    # Strip { } braces first so {\'n} becomes \'n before accent substitution
+    prev = None
+    while text != prev:
+        prev = text
+        text = re.sub(r'\{([^{}]*)\}', r'\1', text)
+    # Common LaTeX accents: \'e -> é, \`a -> à, \^o -> ô, \"u -> ü, etc.
+    text = re.sub(r"\\([`'^\"~=.cvuH])([A-Za-z])", _replace_accent, text)
+    # Special LaTeX characters: \l -> ł, \o -> ø, \ae -> æ, etc.
+    _SPECIAL = {
+        'l': 'ł', 'L': 'Ł', 'o': 'ø', 'O': 'Ø',
+        'aa': 'å', 'AA': 'Å', 'ae': 'æ', 'AE': 'Æ',
+        'oe': 'œ', 'OE': 'Œ', 'ss': 'ß', 'i': 'ı',
+    }
+    text = re.sub(r'\\([A-Za-z]+)', lambda m: _SPECIAL.get(m.group(1), m.group(0)), text)
+    # \\ spacing -> single space
+    text = text.replace('\\ ', ' ')
+    # LaTeX en-dash -- -> Unicode en dash
+    text = text.replace('--', '–')
+    return text.strip()
+
+def format_authors_md(author_field, bold_name=DEFAULT_BOLD_NAME):
+    """Format a full BibTeX author field for Markdown."""
+    raw_list = re.split(r'\s+and\s+', author_field, flags=re.IGNORECASE)
+    formatted = []
+    for raw in raw_list:
+        first_parts, last = parse_author(raw)
+        name = _latex_to_md(format_one_author(first_parts, last, sep=' '))
+        if last.lower() == bold_name.lower():
+            name = f'**{name}**'
+        formatted.append(name)
+    return _join_authors(formatted, '&')
 
 # ==========================================
 # 2. Venue Formatting
@@ -203,6 +256,28 @@ def format_entry(entry, bold_name=DEFAULT_BOLD_NAME):
 
     return f'\\cvpub{{{authors} ({year}). {title_latex}. {venue}.{preprint}}}'
 
+def format_entry_md(entry, number, bold_name=DEFAULT_BOLD_NAME):
+    """Format a single BibTeX entry as a Markdown numbered list item."""
+    authors  = format_authors_md(entry.get('author', ''), bold_name)
+    year     = entry.get('year', '')
+    title    = clean_title(entry.get('title', ''))
+    venue, link_url = format_venue(entry)
+
+    title_md = f'[{title}]({link_url})' if link_url else title
+
+    if detect_arxiv(entry):
+        # Venue: plain "arXiv preprint"; preprint link in parens
+        venue_md = 'arXiv preprint'
+        arxiv_url = link_url or (
+            f'https://arxiv.org/abs/{entry["eprint"]}' if entry.get('eprint') else '')
+        preprint = f' ([preprint]({arxiv_url}))' if arxiv_url else ''
+    else:
+        venue_md = _latex_to_md(venue)
+        eprint = entry.get('eprint', '').strip()
+        preprint = f' ([preprint](https://arxiv.org/abs/{eprint}))' if eprint else ''
+
+    return f'{number}. {authors} ({year}). {title_md}. {venue_md}.{preprint}'
+
 # ==========================================
 # 4. Main
 # ==========================================
@@ -236,7 +311,28 @@ def render_section(section_name, entries, bold_name):
     else:
         return body
 
-def process_bibtex(input_file, bold_name):
+def render_section_md(section_name, entries, bold_name, start_num=1):
+    """Return (markdown_block_or_None, next_number) for one section."""
+    lines = []
+    num = start_num
+    for entry in sorted(entries, key=sort_key):
+        try:
+            lines.append(format_entry_md(entry, num, bold_name))
+            num += 1
+        except Exception as exc:
+            key = entry.get('ID', 'unknown')
+            print(f"Warning: skipping '{key}': {exc}", file=sys.stderr)
+
+    if not lines:
+        return None, num
+
+    body = '\n'.join(lines)
+    if section_name is not None:
+        return f'### {section_name}\n\n{body}', num
+    else:
+        return body, num
+
+def process_bibtex(input_file, bold_name, markdown_file=None):
     try:
         sections = parse_sections(input_file)
         with open(input_file, 'r', encoding='utf-8') as f:
@@ -248,29 +344,49 @@ def process_bibtex(input_file, bold_name):
     entry_dict = {e['ID']: e for e in bib.entries}
 
     if sections:
-        blocks = []
+        latex_blocks = []
+        md_blocks    = []
         rendered_keys = set()
+        md_counter = 1
 
         for section_name, keys in sections:
             entries = [entry_dict[k] for k in keys if k in entry_dict]
             rendered_keys.update(k for k in keys if k in entry_dict)
+
             block = render_section(section_name, entries, bold_name)
             if block:
-                blocks.append(block)
+                latex_blocks.append(block)
+
+            md_block, md_counter = render_section_md(section_name, entries, bold_name, md_counter)
+            if md_block:
+                md_blocks.append(md_block)
 
         # Append any entries not captured by a section
         leftover = [e for e in bib.entries if e['ID'] not in rendered_keys]
         if leftover:
             block = render_section(None, leftover, bold_name)
             if block:
-                blocks.append(block)
+                latex_blocks.append(block)
 
-        print('\\cvsection{Publication List}\n\n\n' + '\n\n\n'.join(blocks))
+            md_block, md_counter = render_section_md(None, leftover, bold_name, md_counter)
+            if md_block:
+                md_blocks.append(md_block)
+
+        print('\\cvsection{Publication List}\n\n\n' + '\n\n\n'.join(latex_blocks))
+        md_output = '\n\n'.join(md_blocks)
     else:
         # No section structure — flat list
         block = render_section(None, bib.entries, bold_name)
         if block:
             print('\\cvsection{Publication List}\n\n\n' + block)
+
+        md_block, _ = render_section_md(None, bib.entries, bold_name)
+        md_output = md_block or ''
+
+    if markdown_file and md_output:
+        with open(markdown_file, 'w', encoding='utf-8') as f:
+            f.write(md_output + '\n')
+        print(f"Markdown written to: {markdown_file}", file=sys.stderr)
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(
@@ -281,5 +397,9 @@ if __name__ == '__main__':
         '--bold', default=DEFAULT_BOLD_NAME, metavar='LAST_NAME',
         help=f'Last name to typeset in bold (default: {DEFAULT_BOLD_NAME})'
     )
+    ap.add_argument(
+        '--markdown', metavar='FILE',
+        help='Also write a Markdown numbered list to FILE'
+    )
     args = ap.parse_args()
-    process_bibtex(args.input, args.bold)
+    process_bibtex(args.input, args.bold, markdown_file=args.markdown)
