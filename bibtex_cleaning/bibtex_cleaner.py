@@ -431,11 +431,13 @@ def process_bibtex(input_file, output_file, dupes_file=None):
                     is_arxiv = True
 
         # --- A2. ArXiv Detection ---
+        # Only the journal/url fields indicate the entry ITSELF is an arXiv
+        # preprint. A published entry (e.g. @inproceedings with a booktitle)
+        # may still carry eprint/archiveprefix to cross-reference its arXiv
+        # version, and that should not turn it into an arXiv-only entry.
         if not is_arxiv:
             if 'arxiv' in entry.get('journal', '').lower() or \
-               'arxiv' in entry.get('url', '').lower() or \
-               'arxiv' in entry.get('eprint', '').lower() or \
-               'arxiv' in entry.get('archiveprefix', '').lower():
+               'arxiv' in entry.get('url', '').lower():
                 is_arxiv = True
 
         # --- A3. ArXiv Journal Reformatting ---
