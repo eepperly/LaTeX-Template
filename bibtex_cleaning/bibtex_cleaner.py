@@ -127,6 +127,12 @@ def process_word_list(words, rules_dict, context_str):
     header_printed = False
 
     for word in words:
+        if '$' in word:
+            # Math expressions (e.g. $O(n^2)$ or {$O(n^2)$}) are left as-is;
+            # capitalization rules don't apply inside math mode.
+            processed.append(word)
+            continue
+
         key = clean_word_key(word)
         if not key or key.isdigit():
             processed.append(word)
