@@ -237,11 +237,34 @@ FUNCTION {format.editors}
   if$
 }
 
+FUNCTION {doi.or.url.target}
+{ doi empty$
+    { url empty$
+	{ "" }
+	{ url }
+      if$
+    }
+    { "https://doi.org/" doi * }
+  if$
+}
+
+FUNCTION {href.wrap}
+{ duplicate$ empty$
+    'skip$
+    { doi.or.url.target duplicate$ empty$
+	{ pop$ }
+	{ "\href{" swap$ * "}{" * swap$ * "}" * }
+      if$
+    }
+  if$
+}
+
 FUNCTION {format.title}
 { title empty$
     { "" }
     { title "t" change.case$ }
   if$
+  href.wrap
 }
 
 FUNCTION {format.eprint}
@@ -252,20 +275,10 @@ FUNCTION {format.eprint}
 }
 
 FUNCTION {format.url}
-{   doi empty$ not
-    url empty$
-  or
-    { "" }
-    { "\urlprefix\url{" url * "}" * }
-  if$
-}
+{ "" }
 
 FUNCTION {format.doi}
-{ doi empty$
-    { "" }
-    { "\doi{" doi * "}" * }
-  if$
-}
+{ "" }
 
 
 FUNCTION {n.dashify}
@@ -312,6 +325,7 @@ FUNCTION {format.date}
 
 FUNCTION {format.btitle}
 { title emphasize
+  href.wrap
 }
 
 FUNCTION {tie.or.space.connect}
