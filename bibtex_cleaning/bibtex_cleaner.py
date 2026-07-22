@@ -107,6 +107,25 @@ def clean_doi_value(doi_text):
 def clean_word_key(word):
     return re.sub(r'[^\w]', '', word)
 
+def tokenize_words(text):
+    """Split text into words, but keep $...$ math spans as single tokens."""
+    tokens = []
+    current = []
+    in_math = False
+    for ch in text:
+        if ch == '$':
+            in_math = not in_math
+            current.append(ch)
+        elif ch == ' ' and not in_math:
+            if current:
+                tokens.append(''.join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append(''.join(current))
+    return tokens
+
 def normalize_title(title):
     """Normalize a title for duplicate detection."""
     if not title:
@@ -128,9 +147,9 @@ def process_word_list(words, rules_dict, context_str):
 
     for word in words:
         if '$' in word:
-            # Math expressions (e.g. $O(n^2)$ or {$O(n^2)$}) are left as-is;
-            # capitalization rules don't apply inside math mode.
-            processed.append(word)
+            # Math expressions are wrapped in braces so LaTeX preserves their
+            # casing; rules prompts don't apply inside math mode.
+            processed.append(f'{{{word}}}')
             continue
 
         key = clean_word_key(word)
@@ -177,7 +196,7 @@ def process_title_interactive(title, rules_dict):
     # Part A: Main Title
     raw_main = parts[0].strip()
     clean_main = raw_main.replace('{', '').replace('}', '')
-    main_words = clean_main.split()
+    main_words = tokenize_words(clean_main)
 
     proc_main_words, main_updated = process_word_list(main_words, rules_dict, clean_main)
     new_main = " ".join(proc_main_words)
@@ -185,15 +204,15 @@ def process_title_interactive(title, rules_dict):
     # Part B: Subtitle
     if len(parts) > 1:
         raw_sub = parts[1].strip()
-        sub_words = raw_sub.split()
+        clean_sub = raw_sub.replace('{', '').replace('}', '')
+        sub_tokens = tokenize_words(clean_sub)
 
-        if sub_words:
-            protected_word = sub_words[0]  # Protect first word
-            remainder_words = sub_words[1:]
+        if sub_tokens:
+            protected_word = sub_tokens[0]  # Protect first word of subtitle
+            remainder_tokens = sub_tokens[1:]
 
-            clean_remainder = [w.replace('{', '').replace('}', '') for w in remainder_words]
-            context_snippet = f"{protected_word} {' '.join(clean_remainder)}"
-            proc_remainder, sub_updated = process_word_list(clean_remainder, rules_dict, context_snippet)
+            context_snippet = ' '.join(sub_tokens)
+            proc_remainder, sub_updated = process_word_list(remainder_tokens, rules_dict, context_snippet)
 
             if proc_remainder:
                 new_sub = f"{protected_word} {' '.join(proc_remainder)}"
