@@ -594,6 +594,7 @@ def process_bibtex(input_file, output_file, dupes_file=None):
 
         # --- D. Interactive Title Logic ---
         if 'title' in entry:
+            entry['title'] = ' '.join(entry['title'].split())
             new_title, changed = process_title_interactive(entry['title'], rules)
             entry['title'] = new_title
             if changed:
