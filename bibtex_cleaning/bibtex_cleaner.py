@@ -152,7 +152,8 @@ def process_word_list(words, rules_dict, context_str):
             processed.append(f'{{{word}}}')
             continue
 
-        key = clean_word_key(word)
+        core = word.strip(',')
+        key = clean_word_key(core)
         if not key or key.isdigit():
             processed.append(word)
             continue
@@ -165,7 +166,7 @@ def process_word_list(words, rules_dict, context_str):
                 header_printed = True
 
             while True:
-                response = input(f"Wrap '{word}' in braces {{}}? [y/N]: ").strip().lower()
+                response = input(f"Wrap '{core}' in braces {{}}? [y/N]: ").strip().lower()
                 if response in ['y', 'yes']:
                     should_cap = True
                     break
