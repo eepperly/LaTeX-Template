@@ -104,6 +104,21 @@ def clean_doi_value(doi_text):
     # Removes https://doi.org/ prefixes
     return re.sub(r'https?://(dx\.)?doi\.org/', '', doi_text, flags=re.IGNORECASE).strip()
 
+def apply_doi_to_entry(entry, doi):
+    """
+    Set DOI (and URL) on an entry.  DOIs of the form 10.5555/... are ACM
+    placeholder DOIs: store the dl.acm.org link as the URL instead and leave
+    the doi field empty so it doesn't appear in the output.
+    """
+    if doi.startswith('10.5555/'):
+        entry['url'] = f'https://dl.acm.org/doi/{doi}'
+        entry.pop('doi', None)
+        return 'url'
+    else:
+        entry['doi'] = doi
+        entry.pop('url', None)
+        return 'doi'
+
 def clean_word_key(word):
     return re.sub(r'[^\w]', '', word)
 
@@ -555,9 +570,11 @@ def process_bibtex(input_file, output_file, dupes_file=None):
 
                 if new_doi:
                     # Case 1: DOI provided
-                    entry['doi'] = clean_doi_value(new_doi)
-                    entry.pop('url', None)
-                    print(f"-> Added DOI: {entry['doi']}")
+                    field = apply_doi_to_entry(entry, clean_doi_value(new_doi))
+                    if field == 'url':
+                        print(f"-> ACM placeholder DOI; set URL: {entry['url']}")
+                    else:
+                        print(f"-> Added DOI: {entry['doi']}")
                     doi_count += 1
                 else:
                     # Case 2: DOI skipped -> Ask for URL
@@ -586,12 +603,8 @@ def process_bibtex(input_file, output_file, dupes_file=None):
 
         # --- C. Clean Existing DOI ---
         if 'doi' in entry and not is_arxiv:
-            old_doi = entry['doi']
-            cleaned = clean_doi_value(old_doi)
-            if old_doi != cleaned:
-                entry['doi'] = cleaned
-            if 'url' in entry:
-                entry.pop('url')
+            cleaned = clean_doi_value(entry['doi'])
+            apply_doi_to_entry(entry, cleaned)
 
         # --- D. Interactive Title Logic ---
         if 'title' in entry:
