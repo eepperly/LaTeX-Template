@@ -185,6 +185,20 @@ def is_stoc(entry):
     return ('theory of computing' in bt_lower or
             re.search(r'\bstoc\b', bt_lower) is not None)
 
+_FOCS_FIRST_YEAR = 1960
+
+def format_focs_booktitle(year):
+    edition = year - _FOCS_FIRST_YEAR + 1
+    return (f'{year} IEEE {numeric_ordinal(edition)} Annual Symposium on '
+            f'Foundations of Computer Science (FOCS)')
+
+def is_focs(entry):
+    """Fuzzy-match a bib entry as a FOCS paper."""
+    bt = entry.get('booktitle', '')
+    bt_lower = bt.lower()
+    return ('foundations of computer science' in bt_lower or
+            re.search(r'\bfocs\b', bt_lower) is not None)
+
 def tokenize_words(text):
     """Split text into words, but keep $...$ math spans as single tokens."""
     tokens = []
@@ -676,6 +690,8 @@ def process_bibtex(input_file, output_file, dupes_file=None):
                 entry['booktitle'] = format_soda_booktitle(year)
             elif is_stoc(entry):
                 entry['booktitle'] = format_stoc_booktitle(year)
+            elif is_focs(entry):
+                entry['booktitle'] = format_focs_booktitle(year)
         except (ValueError, TypeError):
             pass
 
