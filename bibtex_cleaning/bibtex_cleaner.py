@@ -160,6 +160,31 @@ def is_soda(entry):
     return ('discrete algorithms' in bt_lower or
             re.search(r'\bsoda\b', bt_lower) is not None)
 
+def numeric_ordinal(n):
+    """Return a numeric ordinal string: 49 → '49th', 51 → '51st', etc."""
+    if 11 <= (n % 100) <= 13:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f'{n}{suffix}'
+
+_STOC_FIRST_YEAR = 1969
+_STOC_NUMERIC_FROM = 49  # use numeric ordinal for 49th STOC onward
+
+def format_stoc_booktitle(year):
+    edition = year - _STOC_FIRST_YEAR + 1
+    ordinal = (numeric_ordinal(edition) if edition >= _STOC_NUMERIC_FROM
+               else ordinal_word(edition))
+    return (f'Proceedings of the {ordinal} Annual '
+            f'ACM Symposium on the Theory of Computing')
+
+def is_stoc(entry):
+    """Fuzzy-match a bib entry as a STOC paper."""
+    bt = entry.get('booktitle', '')
+    bt_lower = bt.lower()
+    return ('theory of computing' in bt_lower or
+            re.search(r'\bstoc\b', bt_lower) is not None)
+
 def tokenize_words(text):
     """Split text into words, but keep $...$ math spans as single tokens."""
     tokens = []
@@ -645,12 +670,14 @@ def process_bibtex(input_file, output_file, dupes_file=None):
             apply_doi_to_entry(entry, cleaned)
 
         # --- C2. Conference-Specific Booktitle Cleanup ---
-        if is_soda(entry):
-            try:
-                year = int(entry.get('year', ''))
+        try:
+            year = int(entry.get('year', ''))
+            if is_soda(entry):
                 entry['booktitle'] = format_soda_booktitle(year)
-            except (ValueError, TypeError):
-                pass
+            elif is_stoc(entry):
+                entry['booktitle'] = format_stoc_booktitle(year)
+        except (ValueError, TypeError):
+            pass
 
         # --- D. Interactive Title Logic ---
         if 'title' in entry:
