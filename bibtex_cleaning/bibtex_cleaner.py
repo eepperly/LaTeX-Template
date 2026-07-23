@@ -122,6 +122,44 @@ def apply_doi_to_entry(entry, doi):
 def clean_word_key(word):
     return re.sub(r'[^\w]', '', word)
 
+# ==========================================
+# Conference-Specific Booktitle Helpers
+# ==========================================
+
+_ORDINAL_ONES = [
+    '', 'First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh',
+    'Eighth', 'Ninth', 'Tenth', 'Eleventh', 'Twelfth', 'Thirteenth',
+    'Fourteenth', 'Fifteenth', 'Sixteenth', 'Seventeenth', 'Eighteenth',
+    'Nineteenth',
+]
+_ORDINAL_TENS     = ['', '', 'Twentieth', 'Thirtieth', 'Fortieth', 'Fiftieth',
+                     'Sixtieth', 'Seventieth', 'Eightieth', 'Ninetieth']
+_ORDINAL_TENS_PFX = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty',
+                     'Sixty', 'Seventy', 'Eighty', 'Ninety']
+
+def ordinal_word(n):
+    """Return the spelled-out ordinal for n (1 → 'First', 32 → 'Thirty-Second')."""
+    if 1 <= n <= 19:
+        return _ORDINAL_ONES[n]
+    tens, ones = divmod(n, 10)
+    if ones == 0:
+        return _ORDINAL_TENS[tens]
+    return f'{_ORDINAL_TENS_PFX[tens]}-{_ORDINAL_ONES[ones]}'
+
+_SODA_FIRST_YEAR = 1990
+
+def format_soda_booktitle(year):
+    edition = year - _SODA_FIRST_YEAR + 1
+    return (f'Proceedings of the {ordinal_word(edition)} Annual '
+            f'ACM-SIAM Symposium on Discrete Algorithms')
+
+def is_soda(entry):
+    """Fuzzy-match a bib entry as a SODA paper."""
+    bt = entry.get('booktitle', '')
+    bt_lower = bt.lower()
+    return ('discrete algorithms' in bt_lower or
+            re.search(r'\bsoda\b', bt_lower) is not None)
+
 def tokenize_words(text):
     """Split text into words, but keep $...$ math spans as single tokens."""
     tokens = []
@@ -605,6 +643,14 @@ def process_bibtex(input_file, output_file, dupes_file=None):
         if 'doi' in entry and not is_arxiv:
             cleaned = clean_doi_value(entry['doi'])
             apply_doi_to_entry(entry, cleaned)
+
+        # --- C2. Conference-Specific Booktitle Cleanup ---
+        if is_soda(entry):
+            try:
+                year = int(entry.get('year', ''))
+                entry['booktitle'] = format_soda_booktitle(year)
+            except (ValueError, TypeError):
+                pass
 
         # --- D. Interactive Title Logic ---
         if 'title' in entry:
