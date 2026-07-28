@@ -2,7 +2,7 @@
 
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
-from bibtexparser.bibdatabase import BibDatabase
+from bibtexparser.bibdatabase import BibDatabase, BibDataStringExpression
 import re
 import argparse
 import sys
@@ -25,6 +25,36 @@ _ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
 
 _SECTION_RE = re.compile(r'^%%%\s+(.+)$')
 _ENTRY_KEY_RE = re.compile(r'^@(?!string\b|comment\b|preamble\b)\w+\s*\{([^,\s\}]+)', re.IGNORECASE)
+
+def flatten_string_exprs(bib_database):
+    """
+    Replace every BibDataStringExpression field value with its resolved plain
+    string, and return a mapping {(entry_id, field): (expression, resolved)}
+    so the expressions can be restored later for fields we didn't modify.
+    """
+    abbrev_map = {}
+    for entry in bib_database.entries:
+        eid = entry.get('ID', '')
+        for key, val in list(entry.items()):
+            if isinstance(val, BibDataStringExpression):
+                resolved = val.get_value()
+                abbrev_map[(eid, key)] = (val, resolved)
+                entry[key] = resolved
+    return abbrev_map
+
+def restore_string_exprs(bib_database, abbrev_map):
+    """
+    For any field that still holds the originally-resolved string value,
+    put the BibDataStringExpression back so the writer outputs the abbreviation.
+    """
+    for entry in bib_database.entries:
+        eid = entry.get('ID', '')
+        for key in list(entry.keys()):
+            pair = abbrev_map.get((eid, key))
+            if pair is not None:
+                expr, resolved = pair
+                if entry[key] == resolved:
+                    entry[key] = expr
 
 def extract_string_defs(filepath):
     """
@@ -477,7 +507,9 @@ def process_bibtex(input_file, output_file, dupes_file=None):
         string_defs = extract_string_defs(input_file)
         with open(input_file, 'r', encoding='utf-8') as bibtex_file:
             parser = bibtexparser.bparser.BibTexParser(common_strings=True)
+            parser.interpolate_strings = False
             bib_database = bibtexparser.load(bibtex_file, parser=parser)
+        abbrev_map = flatten_string_exprs(bib_database)
     except FileNotFoundError:
         print(f"Error: The file '{input_file}' was not found.")
         sys.exit(1)
@@ -735,6 +767,8 @@ def process_bibtex(input_file, output_file, dupes_file=None):
             ignore_data['arxiv_versions'] = arxiv_versions
             ignore_data['published_entries'] = published_entries
             save_json_file(ignore_file, ignore_data)
+
+    restore_string_exprs(bib_database, abbrev_map)
 
     # Save final bibliography, preserving %%% section comments
     writer = BibTexWriter()
