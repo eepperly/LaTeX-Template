@@ -26,6 +26,29 @@ _ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
 _SECTION_RE = re.compile(r'^%%%\s+(.+)$')
 _ENTRY_KEY_RE = re.compile(r'^@(?!string\b|comment\b|preamble\b)\w+\s*\{([^,\s\}]+)', re.IGNORECASE)
 
+def extract_string_defs(filepath):
+    """
+    Return a list of raw @STRING(...) / @STRING{...} blocks from the file,
+    preserving the original text exactly so they can be written back out.
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    defs = []
+    for m in re.finditer(r'@[Ss][Tt][Rr][Ii][Nn][Gg]\s*([({])', content):
+        start = m.start()
+        opener = m.group(1)
+        closer = ')' if opener == '(' else '}'
+        depth = 0
+        for i in range(m.start(1), len(content)):
+            if content[i] == opener:
+                depth += 1
+            elif content[i] == closer:
+                depth -= 1
+                if depth == 0:
+                    defs.append(content[start:i + 1])
+                    break
+    return defs
+
 def parse_sections(filepath):
     """
     Scan a .bib file for %%% section comments and return an ordered list of
@@ -451,6 +474,7 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 def process_bibtex(input_file, output_file, dupes_file=None):
     try:
         sections = parse_sections(input_file)
+        string_defs = extract_string_defs(input_file)
         with open(input_file, 'r', encoding='utf-8') as bibtex_file:
             parser = bibtexparser.bparser.BibTexParser(common_strings=True)
             bib_database = bibtexparser.load(bibtex_file, parser=parser)
@@ -722,7 +746,7 @@ def process_bibtex(input_file, output_file, dupes_file=None):
         tmp.entries = [e]
         return writer.write(tmp).strip()
 
-    chunks = []
+    chunks = list(string_defs)  # @STRING defs go first
     written = set()
 
     for section_name, keys in sections:
