@@ -695,53 +695,36 @@ def process_bibtex(input_file, output_file, dupes_file=None):
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
             if entry_id not in ignored_dois:
+                current_url = entry.get('url', '')
                 print(f"\nEntry '{entry_id}' is missing a DOI.")
                 print(f"Title: {entry.get('title', 'No Title')}")
+                if current_url:
+                    print(f"Current URL: {current_url}")
+                value = input("Enter DOI or URL [Enter to skip]: ").strip()
 
-                # 1. Ask for DOI
-                new_doi = input("Enter DOI (or press Enter to skip): ").strip()
-
-                if new_doi:
-                    # Case 1: DOI provided
-                    field = apply_doi_to_entry(entry, clean_doi_value(new_doi))
-                    if field == 'url':
-                        print(f"-> ACM placeholder DOI; set URL: {entry['url']}")
-                    else:
-                        print(f"-> Added DOI: {entry['doi']}")
-                    doi_count += 1
-                else:
-                    # Case 2: DOI skipped -> Ask for URL
-                    current_url = entry.get('url', '')
-                    prompt = "Enter URL"
-                    if current_url:
-                        prompt += f" (current: {current_url})"
-                    prompt += " [Enter to skip]: "
-
-                    new_url = input(prompt).strip()
-
-                    if new_url:
-                        doi_from_url = clean_doi_value(new_url)
-                        if doi_from_url != new_url:
-                            # Input was a doi.org URL — treat as DOI
-                            field = apply_doi_to_entry(entry, doi_from_url)
-                            if field == 'url':
-                                print(f"-> ACM placeholder DOI; set URL: {entry['url']}")
-                            else:
-                                print(f"-> Added DOI: {entry['doi']}")
-                            doi_count += 1
+                if value:
+                    cleaned = clean_doi_value(value)
+                    if cleaned != value or not value.startswith('http'):
+                        # doi.org URL (cleaned differs) or bare DOI (no http prefix)
+                        field = apply_doi_to_entry(entry, cleaned)
+                        if field == 'url':
+                            print(f"-> ACM placeholder DOI; set URL: {entry['url']}")
                         else:
-                            entry['url'] = new_url
-                            print(f"-> Added URL.")
-                            url_count += 1
-                        ignored_dois.append(entry_id)
-                        entry_ignore_changed = True
-                    elif current_url:
-                        print("-> Keeping existing URL.")
-                        ignored_dois.append(entry_id)
-                        entry_ignore_changed = True
+                            print(f"-> Added DOI: {entry['doi']}")
+                        doi_count += 1
                     else:
-                        print("-> No identifier provided. Ignoring entry.")
-                        ignored_dois.append(entry_id)
+                        entry['url'] = value
+                        print(f"-> Added URL.")
+                        url_count += 1
+                    ignored_dois.append(entry_id)
+                    entry_ignore_changed = True
+                elif current_url:
+                    print("-> Keeping existing URL.")
+                    ignored_dois.append(entry_id)
+                    entry_ignore_changed = True
+                else:
+                    print("-> No identifier provided. Ignoring entry.")
+                    ignored_dois.append(entry_id)
                         entry_ignore_changed = True
 
         # --- C. Clean Existing DOI ---
