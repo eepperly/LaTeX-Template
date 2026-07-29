@@ -720,9 +720,19 @@ def process_bibtex(input_file, output_file, dupes_file=None):
                     new_url = input(prompt).strip()
 
                     if new_url:
-                        entry['url'] = new_url
-                        print(f"-> Added URL.")
-                        url_count += 1
+                        doi_from_url = clean_doi_value(new_url)
+                        if doi_from_url != new_url:
+                            # Input was a doi.org URL — treat as DOI
+                            field = apply_doi_to_entry(entry, doi_from_url)
+                            if field == 'url':
+                                print(f"-> ACM placeholder DOI; set URL: {entry['url']}")
+                            else:
+                                print(f"-> Added DOI: {entry['doi']}")
+                            doi_count += 1
+                        else:
+                            entry['url'] = new_url
+                            print(f"-> Added URL.")
+                            url_count += 1
                         ignored_dois.append(entry_id)
                         entry_ignore_changed = True
                     elif current_url:
