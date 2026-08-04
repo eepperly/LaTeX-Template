@@ -725,7 +725,7 @@ def process_bibtex(input_file, output_file, dupes_file=None):
                 else:
                     print("-> No identifier provided. Ignoring entry.")
                     ignored_dois.append(entry_id)
-                        entry_ignore_changed = True
+                    entry_ignore_changed = True
 
         # --- C. Clean Existing DOI ---
         if 'doi' in entry and not is_arxiv:
