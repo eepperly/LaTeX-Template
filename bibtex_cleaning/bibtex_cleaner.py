@@ -11,7 +11,7 @@ import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-RULES_FILE = os.path.join(_SCRIPT_DIR, 'title_rules.json')
+DEFAULT_RULES_FILE = os.path.join(_SCRIPT_DIR, 'title_rules.json')
 REMOVE_FIELDS_FILE = os.path.join(_SCRIPT_DIR, 'remove_fields.json')
 DEFAULT_REMOVE_FIELDS = ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords']
 
@@ -707,7 +707,8 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 # ==========================================
 
 def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
-                   global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False):
+                   global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False,
+                   rules_file=DEFAULT_RULES_FILE):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -725,7 +726,11 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
     input_dir = os.path.dirname(os.path.abspath(input_file))
     ignore_file = os.path.join(input_dir, f"{input_basename}.json")
 
-    rules = load_json_file(RULES_FILE, default={})
+    rules = load_json_file(rules_file, default={})
+    if rules:
+        print(f"Title rules: {len(rules)} words known from '{rules_file}'.")
+    else:
+        print(f"Title rules: '{rules_file}' is new or empty; it will be created.")
 
     if not os.path.exists(REMOVE_FIELDS_FILE):
         save_json_file(REMOVE_FIELDS_FILE, DEFAULT_REMOVE_FIELDS)
@@ -1004,7 +1009,7 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
 
         # --- E. Save Progress As You Go ---
         if entry_rules_changed or entry_ignore_changed:
-            save_json_file(RULES_FILE, rules)
+            save_json_file(rules_file, rules)
             ignore_data['ignored_dois'] = ignored_dois
             ignore_data['ignored_duplicates'] = ignored_duplicates
             ignore_data['arxiv_versions'] = arxiv_versions
@@ -1086,7 +1091,7 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         bibtex_file.write('\n\n'.join(chunks) + '\n')
 
     print(f"\nDone! Output saved to: {output_file}")
-    print(f"Title rules are safely stored in '{RULES_FILE}'.")
+    print(f"Title rules are safely stored in '{rules_file}'.")
     print(f"Ignored entries for this paper are stored in '{ignore_file}'.")
     print(f"Stats: {arxiv_count} ArXiv, {doi_count} DOIs, {url_count} URLs added, "
           f"{global_hits} resolved from global bib.")
@@ -1104,9 +1109,19 @@ The cleaner walks every entry and, interactively where needed:
   * offers to remove duplicate entries
   * preserves @STRING abbreviations and %%% section comments
 
-Answers are remembered so you are never asked twice: title-casing rules
-live in title_rules.json (shared by all bibliographies), and per-file
-decisions live alongside the input as <input>.json.
+Answers are remembered so you are never asked twice. Two caches are shared
+by every bibliography you clean, and each can be pointed elsewhere for a
+single run:
+
+  global.bib        entries resolved before (arXiv versions, DOIs),
+                    matched by title so it works across projects
+                    --global FILE   /  --no-global
+  title_rules.json  which title words need {brace} protection
+                    --rules FILE
+
+Decisions that only make sense for one bibliography -- which duplicate to
+keep, which entries to stop asking about -- live alongside the input as
+<input>.json.
 """
 
 _EPILOG = """\
@@ -1120,16 +1135,17 @@ examples:
   # Re-check every arXiv preprint for a new version or publication
   %(prog)s refs.bib cleaned.bib --force_arxiv_checks
 
-  # Use a project-specific global cache instead of the shared one
-  %(prog)s refs.bib cleaned.bib --global ~/papers/global.bib
+  # Use project-specific caches instead of the shared ones
+  %(prog)s refs.bib cleaned.bib --global ~/papers/global.bib \\
+                               --rules  ~/papers/title_rules.json
 
 files written:
   <output>                   the cleaned bibliography
   <input>.json               per-file memory of your answers
   <input>_duplicates.txt     kept-key: removed-key, ... (only if duplicates)
   <input>_rename_keys.sh     find-replace script (only if keys changed)
-  title_rules.json           shared title-casing rules
   global.bib                 shared cache of every entry ever processed
+  title_rules.json           shared title-casing rules
 """
 
 if __name__ == "__main__":
@@ -1166,6 +1182,14 @@ if __name__ == "__main__":
         '--no-global', dest='global_bib', action='store_const', const=None,
         help='Do not read or write the global bibliography cache.')
     parser.add_argument(
+        '--rules', dest='rules_file', metavar='FILE',
+        default=DEFAULT_RULES_FILE,
+        help='Shared record of which title words need {brace} protection. '
+             'Consulted before asking about a word and updated with every '
+             'answer, so each word is only ever asked about once across all '
+             'your bibliographies. '
+             f'Default: {DEFAULT_RULES_FILE}')
+    parser.add_argument(
         '--force_arxiv_checks', action='store_true',
         help='Ask about every arXiv preprint even when the global cache or '
              'this file\'s .json already records a version. Use this to sweep '
@@ -1182,4 +1206,5 @@ if __name__ == "__main__":
                    dupes_file=args.dupes,
                    standardize=args.standardize,
                    global_bib=args.global_bib,
-                   force_arxiv_checks=args.force_arxiv_checks)
+                   force_arxiv_checks=args.force_arxiv_checks,
+                   rules_file=args.rules_file)
