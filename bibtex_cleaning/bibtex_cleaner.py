@@ -60,22 +60,35 @@ def extract_string_defs(filepath):
     """
     Return a list of raw @STRING(...) / @STRING{...} blocks from the file,
     preserving the original text exactly so they can be written back out.
+
+    Only declarations at the start of a line are considered, so an "@STRING("
+    appearing inside an abstract is not mistaken for one.  Delimiters inside
+    a "quoted value" are skipped, so a stray ) or } there cannot truncate the
+    definition.
     """
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
+
     defs = []
-    for m in re.finditer(r'@[Ss][Tt][Rr][Ii][Nn][Gg]\s*([({])', content):
-        start = m.start()
+    pattern = re.compile(r'^[ \t]*@[Ss][Tt][Rr][Ii][Nn][Gg]\s*([({])', re.MULTILINE)
+    for m in pattern.finditer(content):
         opener = m.group(1)
         closer = ')' if opener == '(' else '}'
         depth = 0
+        in_quotes = False
         for i in range(m.start(1), len(content)):
-            if content[i] == opener:
+            ch = content[i]
+            if ch == '"' and content[i - 1] != '\\':
+                in_quotes = not in_quotes
+            elif in_quotes:
+                continue
+            elif ch == opener:
                 depth += 1
-            elif content[i] == closer:
+            elif ch == closer:
                 depth -= 1
                 if depth == 0:
-                    defs.append(content[start:i + 1])
+                    # Start at the '@', dropping any leading indentation
+                    defs.append(content[m.start() + (m.group(0).index('@')):i + 1])
                     break
     return defs
 
@@ -1069,7 +1082,10 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         tmp.entries = [e]
         return writer.write(tmp).strip()
 
-    chunks = list(string_defs)  # @STRING defs go first
+    # @STRING definitions stay together as one contiguous block at the top,
+    # exactly as they were written, rather than being spread out one per
+    # paragraph like the entries below them.
+    chunks = ['\n'.join(string_defs)] if string_defs else []
     written = set()
 
     for section_name, keys in sections:
