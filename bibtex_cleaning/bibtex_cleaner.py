@@ -374,6 +374,119 @@ def normalize_title(title):
     return t
 
 # ==========================================
+# Global Bibliography Cache
+# ==========================================
+#
+# The global .bib accumulates every entry the cleaner has ever processed,
+# keyed (for matching) by normalized title.  It lets a later run reuse an
+# arXiv version or DOI that was resolved in an earlier run -- possibly for
+# a completely different paper -- instead of asking the user again.
+
+DEFAULT_GLOBAL_BIB = os.path.join(_SCRIPT_DIR, 'global.bib')
+
+def plain_entry(entry):
+    """Return a copy of an entry with every value as a plain string."""
+    out = {}
+    for k, v in entry.items():
+        out[k] = v.get_value() if isinstance(v, BibDataStringExpression) else v
+    return out
+
+def load_global_bib(path):
+    """
+    Load the global .bib file.
+    Returns (entries_list, index) where index maps normalized title -> entry.
+    A missing file is not an error -- it will be created on write.
+    """
+    if not path or not os.path.exists(path):
+        return [], {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            parser = bibtexparser.bparser.BibTexParser(common_strings=True)
+            db = bibtexparser.load(f, parser=parser)
+    except Exception as exc:
+        print(f"Warning: could not read global bib '{path}': {exc}")
+        return [], {}
+
+    index = {}
+    for e in db.entries:
+        norm = normalize_title(e.get('title', ''))
+        if norm:
+            index[norm] = e
+    return db.entries, index
+
+def global_lookup(global_index, entry):
+    """Return the global entry with the same normalized title, or None."""
+    norm = normalize_title(entry.get('title', ''))
+    return global_index.get(norm) if norm else None
+
+def entry_is_arxiv(entry):
+    """True if an entry looks like an arXiv preprint."""
+    return ('arxiv' in str(entry.get('journal', '')).lower() or
+            'arxiv' in str(entry.get('url', '')).lower())
+
+def arxiv_version_of(entry):
+    """Return an arXiv entry's version number (e.g. '2'), or '' if unversioned."""
+    m = re.search(r'arXiv:(?:\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})v(\d+)',
+                  str(entry.get('journal', '')))
+    return m.group(1) if m else ''
+
+def apply_global_entry(entry, gentry):
+    """Replace an entry's fields with the global entry's, keeping the local key."""
+    eid = entry['ID']
+    entry.clear()
+    entry.update(plain_entry(gentry))
+    entry['ID'] = eid
+
+def merge_into_global(global_entries, global_index, local_entries):
+    """
+    Merge processed local entries into the global bibliography.
+    Existing entries (matched by normalized title) keep their global key but
+    take the local entry's fields; new entries are appended.
+    Returns (added, updated) counts.
+    """
+    added = updated = 0
+    existing_ids = {e.get('ID', '') for e in global_entries}
+
+    for entry in local_entries:
+        plain = plain_entry(entry)
+        norm = normalize_title(plain.get('title', ''))
+        if not norm:
+            continue
+
+        gentry = global_index.get(norm)
+        if gentry is not None:
+            gid = gentry.get('ID', plain['ID'])
+            merged = dict(plain)
+            merged['ID'] = gid
+            if plain_entry(gentry) != merged:
+                gentry.clear()
+                gentry.update(merged)
+                updated += 1
+        else:
+            new = dict(plain)
+            base = new.get('ID', 'unknown')
+            key, n = base, 1
+            while key in existing_ids:
+                key = f'{base}_{n}'
+                n += 1
+            new['ID'] = key
+            existing_ids.add(key)
+            global_entries.append(new)
+            global_index[norm] = new
+            added += 1
+
+    return added, updated
+
+def write_global_bib(path, entries):
+    """Write the global bibliography, sorted by cite key."""
+    writer = BibTexWriter()
+    writer.indent = '  '
+    db = BibDatabase()
+    db.entries = sorted(entries, key=lambda e: e.get('ID', '').lower())
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(writer.write(db))
+
+# ==========================================
 # 2. Logic: Word Interaction
 # ==========================================
 
@@ -593,7 +706,8 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 # 5. Main Processing Loop
 # ==========================================
 
-def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
+def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
+                   global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -632,6 +746,15 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
     arxiv_count = 0
     doi_count = 0
     url_count = 0
+    global_hits = 0
+
+    # --- Global bibliography cache ---
+    global_entries, global_index = load_global_bib(global_bib)
+    if global_bib:
+        if global_entries:
+            print(f"Global bib: {len(global_entries)} entries loaded from '{global_bib}'.")
+        else:
+            print(f"Global bib: '{global_bib}' is new or empty; it will be created.")
 
     # --- Pre-pass: Deduplication ---
     print("Checking for duplicate titles...")
@@ -724,25 +847,46 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
 
         # --- A4. ArXiv Version / Published Update ---
         if is_arxiv and r'\href' in entry.get('journal', ''):
-            if entry_id in published_entries:
-                # Restore saved published fields, preserving the original key
-                saved = published_entries[entry_id]
-                entry.clear()
-                entry.update(saved)
-                entry['ID'] = entry_id
-                is_arxiv = False
-            elif entry_id in arxiv_versions:
-                version = arxiv_versions[entry_id]
-                if version:
-                    id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
-                    if id_match:
-                        base_id = id_match.group(1)
-                        vid = f"{base_id}v{version}"
-                        entry['journal'] = (
-                            f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
-                            f"{{arXiv:{vid}}}"
-                        )
-            else:
+            gentry = global_lookup(global_index, entry)
+            handled = False
+
+            # Consult caches unless the user demanded a fresh check of every
+            # arXiv entry.  Global bib wins: it is shared across projects.
+            if not force_arxiv_checks:
+                if gentry is not None and not entry_is_arxiv(gentry):
+                    # The global bib knows this preprint was published
+                    apply_global_entry(entry, gentry)
+                    is_arxiv = False
+                    handled = True
+                    global_hits += 1
+                    print(f"-> '{entry_id}': published version from global bib.")
+                elif gentry is not None and arxiv_version_of(gentry):
+                    # Still a preprint at a version we already recorded
+                    entry['journal'] = gentry.get('journal', entry['journal'])
+                    handled = True
+                    global_hits += 1
+                elif entry_id in published_entries:
+                    # Restore saved published fields, preserving the original key
+                    saved = published_entries[entry_id]
+                    entry.clear()
+                    entry.update(saved)
+                    entry['ID'] = entry_id
+                    is_arxiv = False
+                    handled = True
+                elif entry_id in arxiv_versions:
+                    version = arxiv_versions[entry_id]
+                    handled = True
+                    if version:
+                        id_match = re.search(r'arXiv:(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})', entry['journal'])
+                        if id_match:
+                            base_id = id_match.group(1)
+                            vid = f"{base_id}v{version}"
+                            entry['journal'] = (
+                                f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                                f"{{arXiv:{vid}}}"
+                            )
+
+            if not handled:
                 print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
                 print("Options: enter an arXiv version number (e.g. 2), paste a BibTeX entry")
                 print("for the published version (starting with '@'), or press Enter to leave unversioned.")
@@ -786,7 +930,21 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
 
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
-            if entry_id not in ignored_dois:
+            gentry = global_lookup(global_index, entry)
+            gdoi = str(gentry.get('doi', '')).strip() if gentry else ''
+            gurl = str(gentry.get('url', '')).strip() if gentry else ''
+
+            if gdoi or gurl:
+                # The global bib already has an identifier for this paper
+                if gdoi:
+                    apply_doi_to_entry(entry, clean_doi_value(gdoi))
+                    shown = entry.get('doi') or entry.get('url')
+                    print(f"-> '{entry_id}': DOI from global bib: {shown}")
+                else:
+                    entry['url'] = gurl
+                    print(f"-> '{entry_id}': URL from global bib.")
+                global_hits += 1
+            elif entry_id not in ignored_dois:
                 current_url = entry.get('url', '')
                 print(f"\nEntry '{entry_id}' is missing a DOI.")
                 print(f"Title: {entry.get('title', 'No Title')}")
@@ -885,6 +1043,17 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
         )
         write_rename_script(key_renames, script_path)
 
+    # --- Update the global bibliography with everything we just processed ---
+    if global_bib:
+        added, updated = merge_into_global(global_entries, global_index,
+                                           bib_database.entries)
+        try:
+            write_global_bib(global_bib, global_entries)
+            print(f"Global bib updated: {added} added, {updated} updated "
+                  f"({len(global_entries)} total) -> {global_bib}")
+        except OSError as exc:
+            print(f"Warning: could not write global bib '{global_bib}': {exc}")
+
     # Save final bibliography, preserving %%% section comments
     writer = BibTexWriter()
     writer.indent = '  '
@@ -919,16 +1088,98 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None):
     print(f"\nDone! Output saved to: {output_file}")
     print(f"Title rules are safely stored in '{RULES_FILE}'.")
     print(f"Ignored entries for this paper are stored in '{ignore_file}'.")
-    print(f"Stats: {arxiv_count} ArXiv, {doi_count} DOIs, {url_count} URLs added.")
+    print(f"Stats: {arxiv_count} ArXiv, {doi_count} DOIs, {url_count} URLs added, "
+          f"{global_hits} resolved from global bib.")
+
+_DESCRIPTION = """\
+Clean and normalize a BibTeX bibliography.
+
+The cleaner walks every entry and, interactively where needed:
+  * converts arXiv @misc entries to @article with a linked arXiv journal
+    field, and asks whether a preprint has a newer version or has since
+    been published (paste the published BibTeX to replace it)
+  * fills in a missing DOI or URL
+  * rewrites SODA / STOC / FOCS booktitles to their canonical form
+  * asks which title words need {brace} protection, remembering answers
+  * offers to remove duplicate entries
+  * preserves @STRING abbreviations and %%% section comments
+
+Answers are remembered so you are never asked twice: title-casing rules
+live in title_rules.json (shared by all bibliographies), and per-file
+decisions live alongside the input as <input>.json.
+"""
+
+_EPILOG = """\
+examples:
+  # Clean refs.bib into cleaned.bib
+  %(prog)s refs.bib cleaned.bib
+
+  # Also renumber every cite key to alpha style (CET+25)
+  %(prog)s refs.bib cleaned.bib --standardize alpha
+
+  # Re-check every arXiv preprint for a new version or publication
+  %(prog)s refs.bib cleaned.bib --force_arxiv_checks
+
+  # Use a project-specific global cache instead of the shared one
+  %(prog)s refs.bib cleaned.bib --global ~/papers/global.bib
+
+files written:
+  <output>                   the cleaned bibliography
+  <input>.json               per-file memory of your answers
+  <input>_duplicates.txt     kept-key: removed-key, ... (only if duplicates)
+  <input>_rename_keys.sh     find-replace script (only if keys changed)
+  title_rules.json           shared title-casing rules
+  global.bib                 shared cache of every entry ever processed
+"""
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('input', help='Input bib file')
-    parser.add_argument('output', nargs='?', help='Output bib file')
-    parser.add_argument('--dupes', metavar='FILE', help='File to write duplicate log (default: <input>_duplicates.txt)')
-    parser.add_argument('--standardize', choices=['alpha', 'namedateword'], default=None,
-                        help='Standardize cite keys: alpha (Che25, CE25, CET+25) or namedateword (chen2025randomly)')
+    parser = argparse.ArgumentParser(
+        description=_DESCRIPTION,
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        'input', metavar='INPUT.bib',
+        help='BibTeX file to clean.')
+    parser.add_argument(
+        'output', nargs='?', metavar='OUTPUT.bib',
+        help='Where to write the cleaned bibliography '
+             '(default: clean_output.bib in the current directory).')
+    parser.add_argument(
+        '--standardize', choices=['alpha', 'namedateword'], default=None,
+        metavar='STYLE',
+        help='Rewrite every cite key in a uniform style, then emit a '
+             'find-replace script for your .tex files. '
+             "'alpha' gives Che25, CE25, CET25, CETW25, CET+25 (initials by "
+             "author count + 2-digit year); 'namedateword' gives "
+             'chen2025randomly (first author, year, first title word). '
+             'Default: keys are left alone.')
+    parser.add_argument(
+        '--global', dest='global_bib', metavar='FILE',
+        default=DEFAULT_GLOBAL_BIB,
+        help='Shared bibliography cache consulted before asking you about an '
+             'arXiv version or a missing DOI, and updated with every entry '
+             'processed. Matching is by normalized title, so it works across '
+             'projects with different cite keys. '
+             f'Default: {DEFAULT_GLOBAL_BIB}')
+    parser.add_argument(
+        '--no-global', dest='global_bib', action='store_const', const=None,
+        help='Do not read or write the global bibliography cache.')
+    parser.add_argument(
+        '--force_arxiv_checks', action='store_true',
+        help='Ask about every arXiv preprint even when the global cache or '
+             'this file\'s .json already records a version. Use this to sweep '
+             'a bibliography for preprints that have since been published. '
+             'Anything you update is written back to the global cache.')
+    parser.add_argument(
+        '--dupes', metavar='FILE',
+        help='Where to write the duplicate log, one "kept: removed, removed" '
+             'line per group (default: <input>_duplicates.txt).')
     args = parser.parse_args()
 
     out_path = args.output if args.output else 'clean_output.bib'
-    process_bibtex(args.input, out_path, dupes_file=args.dupes, standardize=args.standardize)
+    process_bibtex(args.input, out_path,
+                   dupes_file=args.dupes,
+                   standardize=args.standardize,
+                   global_bib=args.global_bib,
+                   force_arxiv_checks=args.force_arxiv_checks)
