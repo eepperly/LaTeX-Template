@@ -138,6 +138,48 @@ def extract_arxiv_id(text):
     match = re.search(pattern, text)
     return match.group(1) if match else None
 
+# An arXiv identifier: 2401.12345, 2401.12345v2, math.NA/0703012, cs/0703012
+_ARXIV_ID_PAT = r'(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z\-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)'
+
+# A bracketed list of arXiv subject classes: [cs.DS], [cs, math], [math.NA, stat.ML]
+_SUBJECT_CLASS = r'[a-z][a-z\-]*(?:\.[A-Za-z\-]+)?'
+_ARXIV_BRACKET_PAT = (r'\[\s*' + _SUBJECT_CLASS +
+                      r'(?:\s*,\s*' + _SUBJECT_CLASS + r')*\s*\]')
+
+# Everything a purely-identifying arXiv note is allowed to be made of
+_ARXIV_NOTE_TOKENS = re.compile(
+    r'https?://\S*arxiv\.org\S*'   # a link to the abstract page
+    r'|arxiv(?:\.org)?'            # the word arXiv
+    r'|e-?prints?'                 # e-print / eprint / e-prints
+    r'|preprints?'                 # preprint
+    r'|' + _ARXIV_BRACKET_PAT +    # [cs.DS] and friends
+    r'|' + _ARXIV_ID_PAT +         # the identifier itself
+    r'|[\s:;,.\-–—()]',  # punctuation and whitespace
+    re.IGNORECASE)
+
+def note_is_arxiv_only(note):
+    """
+    True if a note field carries nothing but arXiv identification, e.g.
+    "arXiv:1402.3835 [cs.DS]" or "arXiv preprint arXiv:2401.12345v2".
+
+    A note that says anything else -- "To appear in SIAM J. Sci. Comput.",
+    "arXiv:1234.5678. Accepted at STOC 2024" -- is left alone, since
+    removing it would lose information that is not recorded anywhere else.
+    """
+    if not note:
+        return False
+    text = re.sub(r'[{}\\]', '', str(note)).strip()
+    if not text:
+        return False
+
+    # Guard against deleting an unrelated short note: the text must either
+    # mention arXiv or consist solely of a bare arXiv identifier.
+    if not re.search(r'arxiv', text, re.IGNORECASE) and \
+       not re.fullmatch(r'[\s,;]*' + _ARXIV_ID_PAT + r'[\s,;]*', text):
+        return False
+
+    return not _ARXIV_NOTE_TOKENS.sub('', text).strip()
+
 def read_bibtex_paste(first_line):
     """
     Collect a multi-line BibTeX entry from stdin.
@@ -945,6 +987,12 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                                 f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
                                 f"{{arXiv:{vid}}}"
                             )
+
+        # --- A5. Drop a note that only restates the arXiv details ---
+        # The arXiv id already lives in the journal field, so a note like
+        # "arXiv:1402.3835 [cs.DS]" is pure duplication.
+        if is_arxiv and 'note' in entry and note_is_arxiv_only(entry['note']):
+            del entry['note']
 
         # --- B. Missing DOI/URL Logic ---
         if not is_arxiv and 'doi' not in entry:
