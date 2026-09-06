@@ -11,8 +11,13 @@ import os
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DEFAULT_RULES_FILE = os.path.join(_SCRIPT_DIR, 'title_rules.json')
-REMOVE_FIELDS_FILE = os.path.join(_SCRIPT_DIR, 'remove_fields.json')
+# All shared state lives at one fixed location, NOT next to the script.
+# Copies of this script placed in other directories therefore read and write
+# the same caches instead of quietly starting their own beside themselves.
+_SHARED_DIR = os.path.expanduser('~/Documents/LaTeX-Template/bibtex_cleaning')
+
+DEFAULT_RULES_FILE = os.path.join(_SHARED_DIR, 'title_rules.json')
+REMOVE_FIELDS_FILE = os.path.join(_SHARED_DIR, 'remove_fields.json')
 DEFAULT_REMOVE_FIELDS = ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords']
 
 # Fields that are arXiv-specific and should be removed when reformatting
@@ -129,6 +134,9 @@ def load_json_file(filename, default=None):
     return default
 
 def save_json_file(filename, data):
+    parent = os.path.dirname(os.path.abspath(filename))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4, sort_keys=True)
 
@@ -437,7 +445,7 @@ def normalize_title(title):
 # arXiv version or DOI that was resolved in an earlier run -- possibly for
 # a completely different paper -- instead of asking the user again.
 
-DEFAULT_GLOBAL_BIB = os.path.join(_SCRIPT_DIR, 'global.bib')
+DEFAULT_GLOBAL_BIB = os.path.join(_SHARED_DIR, 'global.bib')
 
 def plain_entry(entry):
     """Return a copy of an entry with every value as a plain string."""
@@ -534,6 +542,9 @@ def merge_into_global(global_entries, global_index, local_entries):
 
 def write_global_bib(path, entries):
     """Write the global bibliography, sorted by cite key."""
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     writer = BibTexWriter()
     writer.indent = '  '
     db = BibDatabase()
@@ -545,10 +556,42 @@ def write_global_bib(path, entries):
 # 2. Logic: Word Interaction
 # ==========================================
 
+# Hyphen, en dash and em dash join two words that are cased independently,
+# e.g. non-{Hermitian}, quasi-{Newton}, {Monte}-{Carlo}.
+_COMPOUND_SPLIT_RE = re.compile(r'([-–—])')
+
 def process_word_list(words, rules_dict, context_str):
     processed = []
     updated = False
     header_printed = False
+
+    def decide(token):
+        """
+        Should this single word be brace-protected?  Returns None when there
+        is nothing to decide (empty or purely numeric).  Consults the rules
+        file first and only prompts for a word it has never seen.
+        """
+        nonlocal updated, header_printed
+        key = clean_word_key(token)
+        if not key or key.isdigit():
+            return None
+        if key in rules_dict:
+            return rules_dict[key]
+
+        if not header_printed:
+            print(f"\n--- Title Context: ... {context_str} ... ---")
+            header_printed = True
+        while True:
+            response = input(f"Wrap '{token}' in braces {{}}? [y/N]: ").strip().lower()
+            if response in ['y', 'yes']:
+                val = True
+                break
+            elif response in ['n', 'no', '']:
+                val = False
+                break
+        rules_dict[key] = val
+        updated = True
+        return val
 
     for word in words:
         if '$' in word:
@@ -558,31 +601,22 @@ def process_word_list(words, rules_dict, context_str):
             continue
 
         core = word.strip(',')
-        key = clean_word_key(core)
-        if not key or key.isdigit():
-            processed.append(word)
+        pieces = _COMPOUND_SPLIT_RE.split(core)
+
+        if len(pieces) > 1:
+            # Compound word: each component is decided on its own, so
+            # "non-Hermitian" can come out as non-{Hermitian}.
+            rebuilt = []
+            for i, piece in enumerate(pieces):
+                if i % 2:                      # a separator, kept verbatim
+                    rebuilt.append(piece)
+                else:
+                    rebuilt.append(f'{{{piece}}}' if decide(piece) else piece)
+            new_core = ''.join(rebuilt)
+            processed.append(word.replace(core, new_core, 1) if core else word)
             continue
 
-        if key in rules_dict:
-            should_cap = rules_dict[key]
-        else:
-            if not header_printed:
-                print(f"\n--- Title Context: ... {context_str} ... ---")
-                header_printed = True
-
-            while True:
-                response = input(f"Wrap '{core}' in braces {{}}? [y/N]: ").strip().lower()
-                if response in ['y', 'yes']:
-                    should_cap = True
-                    break
-                elif response in ['n', 'no', '']:
-                    should_cap = False
-                    break
-
-            rules_dict[key] = should_cap
-            updated = True
-
-        if should_cap:
+        if decide(core):
             processed.append(f"{{{word}}}")
         else:
             processed.append(word)
@@ -1174,8 +1208,9 @@ The cleaner walks every entry and, interactively where needed:
   * preserves @STRING abbreviations and %%% section comments
 
 Answers are remembered so you are never asked twice. Two caches are shared
-by every bibliography you clean, and each can be pointed elsewhere for a
-single run:
+by every bibliography you clean. They live at a fixed location, so copies
+of this script in other directories all use the same ones; each can still
+be pointed elsewhere for a single run:
 
   global.bib        entries resolved before (arXiv versions, DOIs),
                     matched by title so it works across projects
