@@ -235,6 +235,21 @@ def apply_doi_to_entry(entry, doi):
         entry.pop('url', None)
         return 'doi'
 
+# Venues whose URL is itself the canonical record of a paper.  PMLR mints no
+# DOI at all, and the ACM Digital Library gives these only the placeholder
+# 10.5555 prefix that apply_doi_to_entry turns back into a dl.acm.org link.
+# An entry holding one of these URLs is already fully identified, so there is
+# nothing to ask the user for.
+_CANONICAL_URL_HOSTS = (
+    'proceedings.mlr.press',
+    'dl.acm.org',
+)
+
+def has_canonical_url(entry):
+    """True if the entry's URL already identifies the paper on its own."""
+    url = str(entry.get('url', '')).lower()
+    return any(host in url for host in _CANONICAL_URL_HOSTS)
+
 def clean_word_key(word):
     return re.sub(r'[^\w]', '', word)
 
@@ -1069,7 +1084,9 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             del entry['note']
 
         # --- B. Missing DOI/URL Logic ---
-        if not is_arxiv and 'doi' not in entry:
+        # An entry whose URL is already the canonical record (PMLR, ACM DL)
+        # needs no DOI, so it is left exactly as it is.
+        if not is_arxiv and 'doi' not in entry and not has_canonical_url(entry):
             gentry = global_lookup(global_index, entry)
             gdoi = str(gentry.get('doi', '')).strip() if gentry else ''
             gurl = str(gentry.get('url', '')).strip() if gentry else ''
