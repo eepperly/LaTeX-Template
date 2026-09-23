@@ -2,7 +2,8 @@
 
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
-from bibtexparser.bibdatabase import BibDatabase, BibDataStringExpression
+from bibtexparser.bibdatabase import (BibDatabase, BibDataString,
+                                      BibDataStringExpression)
 import re
 import argparse
 import sys
@@ -234,6 +235,78 @@ def apply_doi_to_entry(entry, doi):
         entry['doi'] = doi
         entry.pop('url', None)
         return 'doi'
+
+# ==========================================
+# Journal Abbreviation Matching (@STRING)
+# ==========================================
+#
+# A bibliography may define journal abbreviations, e.g.
+#     @STRING(simax = "SIAM J. Matrix Anal. Appl.")
+# Entries naming that journal -- whether abbreviated the same way, spelled
+# out in full, or cased differently -- are rewritten to use the macro.
+
+# Words that carry no identifying weight and are dropped before comparing.
+_JOURNAL_STOPWORDS = {'on', 'and', 'of', 'the', 'for', 'in', 'a', 'an',
+                      'its', 'with', 'to'}
+
+def journal_words(name):
+    """Reduce a journal name to its significant lowercase words."""
+    n = re.sub(r'[{}\\]', '', str(name))
+    n = re.sub(r'[^\w\s]', ' ', n)          # punctuation becomes a gap
+    return [w.lower() for w in n.split() if w.lower() not in _JOURNAL_STOPWORDS]
+
+def journals_match(a, b):
+    """
+    True if two journal names denote the same journal.  They must have the
+    same number of significant words, and each pair must be equal or one a
+    prefix of the other -- which is exactly what abbreviating does:
+        SIAM J.  Matrix Anal.    Appl.
+        SIAM Journal Matrix Analysis Applications
+    Requiring equal word counts keeps distinct journals apart, e.g.
+    "SIAM J. Comput." never matches "SIAM J. Sci. Comput.".
+    """
+    wa, wb = journal_words(a), journal_words(b)
+    if not wa or not wb or len(wa) != len(wb):
+        return False
+    return all(x == y or x.startswith(y) or y.startswith(x)
+               for x, y in zip(wa, wb))
+
+def string_def_keys(string_defs):
+    """Return the macro names defined by the file's own @STRING blocks."""
+    keys = []
+    for d in string_defs:
+        m = re.match(r'@[Ss][Tt][Rr][Ii][Nn][Gg]\s*[({]\s*([^\s=,]+)\s*=', d)
+        if m:
+            keys.append(m.group(1))
+    return keys
+
+def apply_journal_abbreviations(bib_database, string_defs):
+    """
+    Replace journal names that match one of the file's own @STRING values
+    with the macro itself, so the output reads `journal = simax`.
+
+    Call this only after the global bibliography has been written: the
+    global copy must keep the journal spelled out, since the macro means
+    nothing outside the file that defines it.
+    """
+    defined = [(k, bib_database.strings[k]) for k in string_def_keys(string_defs)
+               if k in bib_database.strings]
+    if not defined:
+        return 0
+
+    count = 0
+    for entry in bib_database.entries:
+        journal = entry.get('journal')
+        # A non-string value is already a macro expression; leave it be.
+        if not isinstance(journal, str) or not journal.strip():
+            continue
+        for key, value in defined:
+            if journals_match(journal, value):
+                entry['journal'] = BibDataStringExpression(
+                    [BibDataString(bib_database, key)])
+                count += 1
+                break
+    return count
 
 # Venues whose URL is itself the canonical record of a paper.  PMLR mints no
 # DOI at all, and the ACM Digital Library gives these only the placeholder
@@ -1210,6 +1283,15 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                   f"({len(global_entries)} total) -> {global_bib}")
         except OSError as exc:
             print(f"Warning: could not write global bib '{global_bib}': {exc}")
+
+    # --- Journal abbreviations (local output only) ---
+    # Deliberately after the global bib has been written: the global copy
+    # keeps journals spelled out, because a macro is meaningless outside
+    # the file whose @STRING block defines it.
+    n_abbrev = apply_journal_abbreviations(bib_database, string_defs)
+    if n_abbrev:
+        print(f"Applied @STRING journal abbreviations to {n_abbrev} entr"
+              f"{'y' if n_abbrev == 1 else 'ies'}.")
 
     # Save final bibliography, preserving %%% section comments
     writer = BibTexWriter()
