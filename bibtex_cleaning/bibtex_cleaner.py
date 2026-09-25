@@ -166,6 +166,29 @@ _ARXIV_NOTE_TOKENS = re.compile(
     r'|[\s:;,.\-–—()]',  # punctuation and whitespace
     re.IGNORECASE)
 
+# Phrases announcing that a work is not yet formally published.  These sit in
+# note/journal/booktitle rather than the title, so scanning only those fields
+# keeps a paper *about* accepted manuscripts from being flagged.
+_FORTHCOMING_RE = re.compile(
+    r'\b(to\s+appear|in\s+press|in\s+preparation|forthcoming|'
+    r'accepted|submitted|under\s+review)\b', re.IGNORECASE)
+
+_FORTHCOMING_FIELDS = ('note', 'journal', 'booktitle', 'pages', 'volume',
+                       'howpublished', 'year', 'status')
+
+def forthcoming_marker(entry):
+    """
+    Return (field, value, phrase) for the first field announcing that the work
+    has not appeared yet -- "to appear", "in press", "in preparation",
+    "accepted", "submitted" -- or None.
+    """
+    for field in _FORTHCOMING_FIELDS:
+        value = str(entry.get(field, ''))
+        m = _FORTHCOMING_RE.search(value)
+        if m:
+            return field, value, m.group(0)
+    return None
+
 def note_is_arxiv_only(note):
     """
     True if a note field carries nothing but arXiv identification, e.g.
@@ -1150,6 +1173,41 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                                 f"{{arXiv:{vid}}}"
                             )
 
+        # --- A4b. Forthcoming work: "to appear", "in press", ... ---
+        # These are not arXiv preprints, so A4 never looks at them, yet they
+        # go stale in exactly the same way.  A saved answer is reused unless
+        # the user asked for a fresh sweep.
+        if not is_arxiv:
+            marker = forthcoming_marker(entry)
+            if marker:
+                if entry_id in published_entries and not force_arxiv_checks:
+                    saved = published_entries[entry_id]
+                    entry.clear()
+                    entry.update(saved)
+                    entry['ID'] = entry_id
+                elif force_arxiv_checks:
+                    field, value, phrase = marker
+                    print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
+                    print(f"Listed as not yet published -- {field} = {value.strip()}")
+                    print("Paste the published BibTeX entry (starting with '@'), "
+                          "or press Enter to leave it as is.")
+                    first_line = input("> ").strip()
+
+                    if first_line.startswith('@'):
+                        raw = read_bibtex_paste(first_line)
+                        parsed = parse_bibtex_entry(raw)
+                        if parsed:
+                            parsed['ID'] = entry_id
+                            entry.clear()
+                            entry.update(parsed)
+                            published_entries[entry_id] = {
+                                k: v for k, v in parsed.items() if k != 'ID'}
+                            ignore_data['published_entries'] = published_entries
+                            entry_ignore_changed = True
+                            print(f"-> Updated '{entry_id}' to published version.")
+                        else:
+                            print("-> Could not parse BibTeX entry; leaving unchanged.")
+
         # --- A5. Drop a note that only restates the arXiv details ---
         # The arXiv id already lives in the journal field, so a note like
         # "arXiv:1402.3835 [cs.DS]" is pure duplication.
@@ -1429,10 +1487,13 @@ if __name__ == "__main__":
              f'Default: {DEFAULT_RULES_FILE}')
     parser.add_argument(
         '--force_arxiv_checks', action='store_true',
-        help='Ask about every arXiv preprint even when the global cache or '
-             'this file\'s .json already records a version. Use this to sweep '
-             'a bibliography for preprints that have since been published. '
-             'Anything you update is written back to the global cache.')
+        help='Sweep the bibliography for work that may have appeared since '
+             'you last looked. Asks about every arXiv preprint even when the '
+             'global cache or this file\'s .json already records a version, '
+             'and also asks you to paste updated BibTeX for entries marked '
+             '"to appear", "in press", "in preparation", "accepted" or '
+             '"submitted". Anything you update is remembered and written '
+             'back to the global cache.')
     parser.add_argument(
         '--dupes', metavar='FILE',
         help='Where to write the duplicate log, one "kept: removed, removed" '
