@@ -711,6 +711,44 @@ def write_global_bib(path, entries):
 # e.g. non-{Hermitian}, quasi-{Newton}, {Monte}-{Carlo}.
 _COMPOUND_SPLIT_RE = re.compile(r'([-–—])')
 
+# What may be answered when asked about a word.  Any combination is allowed:
+#   y  brace-protect it            n  leave it unprotected (the default)
+#   c  capitalize the first letter l  lowercase the whole word
+#   m  set it in math mode
+# so "yc" on 'vendi' gives {Vendi}, and "m" on 'n' gives {$n$}.
+_WORD_FLAGS = set('ynclm')
+
+def decision_flags(stored):
+    """
+    Normalise a stored rule to a flag string.  Rules recorded before the extra
+    options existed are plain booleans, so True means 'brace it' and False
+    means 'leave it'.
+    """
+    if stored is True:
+        return 'y'
+    if stored is False or stored is None:
+        return ''
+    return str(stored).lower()
+
+def apply_word_flags(word, flags):
+    """
+    Apply a decision to a word.  Case changes come first, then math mode, then
+    braces.  Math is always brace-protected, matching how the cleaner treats
+    math it finds already present, which also keeps the result idempotent.
+    """
+    if not flags or not word:
+        return word
+    out = word
+    if 'l' in flags:
+        out = out.lower()
+    if 'c' in flags:
+        out = out[:1].upper() + out[1:]
+    if 'm' in flags:
+        out = f'${out}$'
+    if 'y' in flags or 'm' in flags:
+        out = f'{{{out}}}'
+    return out
+
 def process_word_list(words, rules_dict, context_str):
     processed = []
     updated = False
@@ -718,31 +756,41 @@ def process_word_list(words, rules_dict, context_str):
 
     def decide(token):
         """
-        Should this single word be brace-protected?  Returns None when there
-        is nothing to decide (empty or purely numeric).  Consults the rules
-        file first and only prompts for a word it has never seen.
+        Return the flag string recording what to do with one word ('' to leave
+        it alone), or None when there is nothing to decide (empty or purely
+        numeric).  The rules file is consulted first; a word it has never seen
+        is prompted for exactly once.
         """
         nonlocal updated, header_printed
         key = clean_word_key(token)
         if not key or key.isdigit():
             return None
         if key in rules_dict:
-            return rules_dict[key]
+            return decision_flags(rules_dict[key])
 
         if not header_printed:
             print(f"\n--- Title Context: ... {context_str} ... ---")
+            print('    y=braces  n=none  c=Capitalize  l=lowercase  '
+                  'm=math $..$   (combine, e.g. yc)')
             header_printed = True
+
         while True:
             response = input(f"Wrap '{token}' in braces {{}}? [y/N]: ").strip().lower()
-            if response in ['y', 'yes']:
-                val = True
+            if response == 'yes':
+                response = 'y'
+            elif response == 'no':
+                response = 'n'
+            if response == '' or set(response) <= _WORD_FLAGS:
+                flags = response.replace('n', '')   # 'n' only means "no braces"
                 break
-            elif response in ['n', 'no', '']:
-                val = False
-                break
-        rules_dict[key] = val
+            print('    Please use any combination of y n c l m '
+                  '(y=braces, c=Capitalize, l=lowercase, m=math).')
+
+        # Keep the common answers as plain booleans so the rules file stays
+        # in the shape it has always had; only richer answers need a string.
+        rules_dict[key] = True if flags == 'y' else (False if flags == '' else flags)
         updated = True
-        return val
+        return flags
 
     for word in words:
         if '$' in word:
@@ -762,15 +810,13 @@ def process_word_list(words, rules_dict, context_str):
                 if i % 2:                      # a separator, kept verbatim
                     rebuilt.append(piece)
                 else:
-                    rebuilt.append(f'{{{piece}}}' if decide(piece) else piece)
+                    rebuilt.append(apply_word_flags(piece, decide(piece)))
             new_core = ''.join(rebuilt)
-            processed.append(word.replace(core, new_core, 1) if core else word)
-            continue
-
-        if decide(core):
-            processed.append(f"{{{word}}}")
         else:
-            processed.append(word)
+            new_core = apply_word_flags(core, decide(core))
+
+        # Re-attach any punctuation that was stripped off the ends
+        processed.append(word.replace(core, new_core, 1) if core else word)
 
     return processed, updated
 
