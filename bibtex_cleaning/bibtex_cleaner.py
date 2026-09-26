@@ -783,31 +783,47 @@ _COMPOUND_SPLIT_RE = re.compile(r'([-–—])')
 # What may be answered when asked about a word.  Any combination is allowed:
 #   y  brace-protect it            n  leave it unprotected (the default)
 #   c  capitalize the first letter l  lowercase the whole word
-#   m  set it in math mode
-# so "yc" on 'vendi' gives {Vendi}, and "m" on 'n' gives {$n$}.
-_WORD_FLAGS = set('ynclm')
+#   m  set it in math mode         e  replace it with text you type
+# so "yc" on 'vendi' gives {Vendi}, "m" on 'n' gives {$n$}, and "ey" asks for
+# replacement text and braces whatever you type.
+_WORD_FLAGS = set('ynclme')
 
+# A decision is a flag string, optionally followed by ':' and the replacement
+# text supplied for 'e'.  The text keeps its case; the flags do not.
 def decision_flags(stored):
     """
-    Normalise a stored rule to a flag string.  Rules recorded before the extra
-    options existed are plain booleans, so True means 'brace it' and False
-    means 'leave it'.
+    Normalise a stored rule.  Rules recorded before the extra options existed
+    are plain booleans, so True means 'brace it' and False means 'leave it'.
     """
     if stored is True:
         return 'y'
     if stored is False or stored is None:
         return ''
-    return str(stored).lower()
+    text = str(stored)
+    if ':' in text:
+        flags, replacement = text.split(':', 1)
+        return flags.lower() + ':' + replacement
+    return text.lower()
 
-def apply_word_flags(word, flags):
+def split_decision(stored):
+    """Return (flags, replacement_or_None) for a stored rule."""
+    text = decision_flags(stored)
+    if ':' in text:
+        flags, replacement = text.split(':', 1)
+        return flags, replacement
+    return text, None
+
+def apply_word_flags(word, decision):
     """
-    Apply a decision to a word.  Case changes come first, then math mode, then
-    braces.  Math is always brace-protected, matching how the cleaner treats
-    math it finds already present, which also keeps the result idempotent.
+    Apply a decision to a word.  A replacement supplied with 'e' substitutes
+    the word first; then case changes, then math mode, then braces.  Math is
+    always brace-protected, matching how the cleaner treats math it finds
+    already present, which also keeps the result idempotent.
     """
-    if not flags or not word:
+    if not decision or not word:
         return word
-    out = word
+    flags, replacement = split_decision(decision)
+    out = replacement if replacement is not None else word
     if 'l' in flags:
         out = out.lower()
     if 'c' in flags:
@@ -817,6 +833,23 @@ def apply_word_flags(word, flags):
     if 'y' in flags or 'm' in flags:
         out = f'{{{out}}}'
     return out
+
+def prompt_with_default(prompt, default=''):
+    """
+    Ask for a line of text, pre-filled with `default` so it can be edited
+    rather than retyped.  Falls back to showing the default in brackets where
+    readline is unavailable.
+    """
+    try:
+        import readline
+    except ImportError:
+        typed = input(f'{prompt}[{default}] ')
+        return typed if typed.strip() else default
+    readline.set_startup_hook(lambda: readline.insert_text(default))
+    try:
+        return input(prompt)
+    finally:
+        readline.set_startup_hook()
 
 def process_word_list(words, rules_dict, context_str):
     processed = []
@@ -840,7 +873,7 @@ def process_word_list(words, rules_dict, context_str):
         if not header_printed:
             print(f"\n--- Title Context: ... {context_str} ... ---")
             print('    y=braces  n=none  c=Capitalize  l=lowercase  '
-                  'm=math $..$   (combine, e.g. yc)')
+                  'm=math $..$  e=edit text   (combine, e.g. yc)')
             header_printed = True
 
         while True:
@@ -852,14 +885,25 @@ def process_word_list(words, rules_dict, context_str):
             if response == '' or set(response) <= _WORD_FLAGS:
                 flags = response.replace('n', '')   # 'n' only means "no braces"
                 break
-            print('    Please use any combination of y n c l m '
-                  '(y=braces, c=Capitalize, l=lowercase, m=math).')
+            print('    Please use any combination of y n c l m e '
+                  '(y=braces, c=Capitalize, l=lowercase, m=math, e=edit).')
+
+        decision = flags
+        if 'e' in flags:
+            replacement = prompt_with_default(f"    Replace '{token}' with: ",
+                                              token).strip()
+            if not replacement or replacement == token:
+                # Nothing actually changed; drop the edit but keep other flags
+                decision = flags.replace('e', '')
+            else:
+                decision = flags + ':' + replacement
 
         # Keep the common answers as plain booleans so the rules file stays
         # in the shape it has always had; only richer answers need a string.
-        rules_dict[key] = True if flags == 'y' else (False if flags == '' else flags)
+        rules_dict[key] = (True if decision == 'y'
+                           else (False if decision == '' else decision))
         updated = True
-        return flags
+        return decision
 
     for word in words:
         if '$' in word:
