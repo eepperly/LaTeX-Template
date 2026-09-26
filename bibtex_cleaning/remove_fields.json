@@ -1,8 +1,17 @@
-[
-    "abstract",
-    "file",
-    "issn",
-    "keywords",
-    "langid",
-    "shorttitle"
-]
+{
+    "*": [
+        "abstract",
+        "file",
+        "issn",
+        "keywords",
+        "langid",
+        "shorttitle"
+    ],
+    "article": [
+        "publisher"
+    ],
+    "inproceedings": [
+        "editor",
+        "publisher"
+    ]
+}

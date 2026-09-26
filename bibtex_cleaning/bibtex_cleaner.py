@@ -22,7 +22,17 @@ _SHARED_DIR = os.path.expanduser('~/Documents/LaTeX-Template/bibtex_cleaning')
 
 DEFAULT_RULES_FILE = os.path.join(_SHARED_DIR, 'title_rules.json')
 REMOVE_FIELDS_FILE = os.path.join(_SHARED_DIR, 'remove_fields.json')
-DEFAULT_REMOVE_FIELDS = ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords']
+# Fields to strip, per entry type.  '*' applies to every entry; a type's own
+# list is applied on top of it.  A plain list is still accepted and is read as
+# if it were the '*' entry.
+DEFAULT_REMOVE_FIELDS = {
+    '*': ['abstract', 'shorttitle', 'file', 'langid', 'issn', 'keywords'],
+    'article': ['publisher'],
+    'inproceedings': ['editor', 'publisher'],
+}
+
+# Never removable, whatever the config says: bibtexparser needs both.
+_PROTECTED_FIELDS = {'id', 'entrytype'}
 
 # Fields that are arXiv-specific and should be removed when reformatting
 _ARXIV_FIELDS = ('eprint', 'archiveprefix', 'primaryclass', 'publisher',
@@ -125,6 +135,35 @@ def parse_sections(filepath):
 
     sections.append((current_name, current_keys))
     return [(n, ks) for n, ks in sections if n is not None or ks]
+
+def normalize_remove_fields(config):
+    """
+    Accept either shape of remove_fields.json and return
+    {entry_type_or_'*': {lowercased field names}}.
+
+    A plain list means "remove these from everything" and is read as the '*'
+    entry, so files written before per-type rules existed still work.
+    """
+    if isinstance(config, list):
+        return {'*': {str(f).lower() for f in config}}
+
+    if isinstance(config, dict):
+        out = {}
+        for etype, fields in config.items():
+            if isinstance(fields, str):
+                fields = [fields]
+            if isinstance(fields, list):
+                out[str(etype).lower()] = {str(f).lower() for f in fields}
+        if out:
+            return out
+
+    print(f"Warning: could not read '{REMOVE_FIELDS_FILE}'; using defaults.")
+    return normalize_remove_fields(DEFAULT_REMOVE_FIELDS)
+
+def fields_to_remove(remove_map, entry_type):
+    """Fields to strip from an entry of this type: the '*' set plus its own."""
+    own = remove_map.get(str(entry_type or '').lower(), set())
+    return (remove_map.get('*', set()) | own) - _PROTECTED_FIELDS
 
 def load_json_file(filename, default=None):
     if default is None:
@@ -1134,10 +1173,12 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
     if not os.path.exists(REMOVE_FIELDS_FILE):
         save_json_file(REMOVE_FIELDS_FILE, DEFAULT_REMOVE_FIELDS)
         print(f"Created '{REMOVE_FIELDS_FILE}' with default fields to remove.")
-    remove_fields = load_json_file(REMOVE_FIELDS_FILE, default=DEFAULT_REMOVE_FIELDS)
-    if not isinstance(remove_fields, list):
-        remove_fields = DEFAULT_REMOVE_FIELDS
-    remove_fields_lower = {f.lower() for f in remove_fields}
+    remove_map = normalize_remove_fields(
+        load_json_file(REMOVE_FIELDS_FILE, default=DEFAULT_REMOVE_FIELDS))
+    per_type = {t: sorted(f) for t, f in remove_map.items() if t != '*'}
+    if per_type:
+        print('Removing per type: ' + '; '.join(
+            f'@{t} {", ".join(f)}' for t, f in sorted(per_type.items())))
 
     ignore_data = load_json_file(ignore_file, default={})
     if not isinstance(ignore_data, dict):
@@ -1212,7 +1253,8 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         entry_ignore_changed = False
 
         # --- 0. Remove Configured Fields ---
-        for key in [k for k in list(entry.keys()) if k.lower() in remove_fields_lower]:
+        drop = fields_to_remove(remove_map, entry.get('ENTRYTYPE', ''))
+        for key in [k for k in list(entry.keys()) if k.lower() in drop]:
             del entry[key]
 
         # --- A. Conversion Logic (@misc -> @article) ---
@@ -1658,6 +1700,21 @@ files written:
   <input>_rename_keys.sh     find-replace script (only if keys changed)
   global.bib                 shared cache of every entry ever processed
   title_rules.json           shared title-casing rules
+  remove_fields.json         fields to strip, per entry type
+
+remove_fields.json:
+  Maps an entry type to the fields stripped from it. '*' applies to every
+  entry and a type's own list is applied on top, so
+
+    {
+      "*":             ["abstract", "keywords"],
+      "article":       ["publisher"],
+      "inproceedings": ["editor", "publisher"]
+    }
+
+  drops abstract and keywords everywhere, publisher from @article, and both
+  editor and publisher from @inproceedings. A plain list of field names is
+  still accepted and is read as the '*' entry.
 """
 
 if __name__ == "__main__":
