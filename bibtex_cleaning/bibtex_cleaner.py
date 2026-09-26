@@ -9,6 +9,9 @@ import argparse
 import sys
 import json
 import os
+import time
+import urllib.request
+import urllib.parse
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -211,6 +214,72 @@ def note_is_arxiv_only(note):
         return False
 
     return not _ARXIV_NOTE_TOKENS.sub('', text).strip()
+
+# ==========================================
+# Online Lookups (arXiv API, doi.org)
+# ==========================================
+#
+# Used only with --online.  Every failure here is non-fatal: the cleaner falls
+# back to asking the user, exactly as it does offline.
+
+_ARXIV_API = 'http://export.arxiv.org/api/query'
+_HTTP_UA = 'bibtex_cleaner/1.0 (+https://github.com/eepperly/LaTeX-Template)'
+
+def _http_get(url, accept=None, timeout=20):
+    req = urllib.request.Request(url, headers={'User-Agent': _HTTP_UA})
+    if accept:
+        req.add_header('Accept', accept)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode('utf-8', 'replace')
+
+def arxiv_key(arxiv_id):
+    """
+    Normalise an arXiv id for lookup.  Old-style ids carry a subject class in
+    the bibliography (math.NA/0703012) that the API omits (math/0703012).
+    """
+    return re.sub(r'^([a-z\-]+)\.[A-Za-z]{2}/', r'\1/', str(arxiv_id).strip())
+
+def fetch_arxiv_info(arxiv_ids, chunk=100):
+    """
+    Ask the arXiv API about many papers in one request per chunk.  Returns
+    {arxiv_key: {'version', 'doi', 'journal_ref'}}; ids the API does not know
+    are simply absent.  'doi' and 'journal_ref' are only populated when the
+    authors registered them with arXiv, which many never do.
+    """
+    found = {}
+    ids = [i for i in dict.fromkeys(arxiv_key(i) for i in arxiv_ids) if i]
+    for start in range(0, len(ids), chunk):
+        batch = ids[start:start + chunk]
+        query = urllib.parse.urlencode({'id_list': ','.join(batch),
+                                        'max_results': str(len(batch))})
+        try:
+            xml = _http_get(f'{_ARXIV_API}?{query}')
+        except Exception as exc:
+            print(f"Warning: arXiv lookup failed ({exc}); continuing without it.")
+            return found
+        for block in re.split(r'<entry>', xml)[1:]:
+            m = re.search(r'<id>\s*https?://arxiv\.org/abs/(\S+?)v(\d+)\s*</id>', block)
+            if not m:
+                continue
+            doi = re.search(r'<arxiv:doi[^>]*>([^<]+)</arxiv:doi>', block)
+            ref = re.search(r'<arxiv:journal_ref[^>]*>([^<]+)</arxiv:journal_ref>', block)
+            found[arxiv_key(m.group(1))] = {
+                'version': m.group(2),
+                'doi': doi.group(1).strip() if doi else '',
+                'journal_ref': ' '.join(ref.group(1).split()) if ref else '',
+            }
+        if start + chunk < len(ids):
+            time.sleep(3)          # arXiv asks for a 3 s gap between requests
+    return found
+
+def fetch_bibtex_for_doi(doi):
+    """Fetch a BibTeX entry for a DOI through doi.org content negotiation."""
+    try:
+        text = _http_get('https://doi.org/' + urllib.parse.quote(doi),
+                         accept='application/x-bibtex').strip()
+    except Exception:
+        return None
+    return text if text.startswith('@') else None
 
 def read_bibtex_paste(first_line):
     """
@@ -994,7 +1063,7 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 
 def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                    global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False,
-                   rules_file=DEFAULT_RULES_FILE):
+                   rules_file=DEFAULT_RULES_FILE, online=False):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -1068,6 +1137,25 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             for kept, dups in kept_to_removed.items():
                 f.write(f"{kept}: {', '.join(dups)}\n")
         print(f"Duplicate log written to: {out}")
+
+    # --- Pre-pass: one batched arXiv lookup for every preprint ---
+    arxiv_info = {}
+    if online:
+        ids = [i for i in (extract_arxiv_id(str(e.get('journal', '')))
+                           or extract_arxiv_id(str(e.get('eprint', '')))
+                           for e in bib_database.entries
+                           if entry_is_arxiv(e)) if i]
+        if ids:
+            print(f"Looking up {len(set(map(arxiv_key, ids)))} arXiv "
+                  f"preprint(s) online...")
+            arxiv_info = fetch_arxiv_info(ids)
+            newer = sum(1 for e in bib_database.entries if entry_is_arxiv(e)
+                        for k in [arxiv_key(extract_arxiv_id(str(e.get('journal', ''))) or '')]
+                        if k in arxiv_info
+                        and arxiv_info[k]['version'] != arxiv_version_of(e))
+            pubs = sum(1 for v in arxiv_info.values() if v['doi'])
+            print(f"  {len(arxiv_info)} found; {newer} have a newer version, "
+                  f"{pubs} report a published DOI.")
 
     print("Scanning bibliography...")
 
@@ -1179,13 +1267,51 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
 
             if not handled:
                 print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
-                print("Options: enter an arXiv version number (e.g. 2), paste a BibTeX entry")
-                print("for the published version (starting with '@'), or press Enter to leave unversioned.")
+
+                # With --online, offer what arXiv reports as the default answer
+                suggestion = None          # ('bibtex', text) or ('version', '3')
+                aid = extract_arxiv_id(entry.get('journal', ''))
+                info = arxiv_info.get(arxiv_key(aid)) if aid else None
+                if info:
+                    have = arxiv_version_of(entry)
+                    if info['doi']:
+                        fetched = fetch_bibtex_for_doi(info['doi'])
+                        if fetched:
+                            print("  arXiv reports this is published: "
+                                  f"{info['journal_ref'] or info['doi']}")
+                            print("  Replacement fetched from doi.org:")
+                            for line in fetched.splitlines():
+                                print('    ' + line)
+                            suggestion = ('bibtex', fetched)
+                    if suggestion is None and info['version'] \
+                            and info['version'] != have:
+                        print(f"  arXiv is now at v{info['version']}"
+                              + (f"; this entry says v{have}" if have else ''))
+                        suggestion = ('version', info['version'])
+
+                if suggestion:
+                    what = ('the published version above' if suggestion[0] == 'bibtex'
+                            else f'v{suggestion[1]}')
+                    print(f"Options: Enter to accept {what}, another version number, a")
+                    print("pasted BibTeX entry (starting with '@'), or 's' to leave unversioned.")
+                else:
+                    print("Options: enter an arXiv version number (e.g. 2), paste a BibTeX entry")
+                    print("for the published version (starting with '@'), or press Enter to leave unversioned.")
                 first_line = input("> ").strip()
 
-                if first_line.startswith('@'):
-                    # User is pasting a published BibTeX entry
+                # Work out what was actually chosen
+                raw = None
+                if first_line.lower() == 's':
+                    first_line = ''
+                elif first_line == '' and suggestion:
+                    if suggestion[0] == 'bibtex':
+                        raw = suggestion[1]
+                    else:
+                        first_line = suggestion[1]
+                elif first_line.startswith('@'):
                     raw = read_bibtex_paste(first_line)
+
+                if raw is not None:
                     parsed = parse_bibtex_entry(raw)
                     if parsed:
                         parsed['ID'] = entry_id
@@ -1532,6 +1658,15 @@ if __name__ == "__main__":
              'your bibliographies. '
              f'Default: {DEFAULT_RULES_FILE}')
     parser.add_argument(
+        '--online', action='store_true',
+        help='Look preprints up on arXiv and offer the answer as the default. '
+             'One batched request reports each preprint\'s latest version, '
+             'which is suggested when it is newer than the entry; if the '
+             'authors registered a journal DOI with arXiv, the published '
+             'BibTeX is fetched from doi.org and offered as the replacement. '
+             'Press Enter to accept, or answer as usual. Requires network '
+             'access; any failure just falls back to asking.')
+    parser.add_argument(
         '--force_arxiv_checks', action='store_true',
         help='Sweep the bibliography for work that may have appeared since '
              'you last looked. Asks about every arXiv preprint even when the '
@@ -1552,4 +1687,5 @@ if __name__ == "__main__":
                    standardize=args.standardize,
                    global_bib=args.global_bib,
                    force_arxiv_checks=args.force_arxiv_checks,
-                   rules_file=args.rules_file)
+                   rules_file=args.rules_file,
+                   online=args.online)
