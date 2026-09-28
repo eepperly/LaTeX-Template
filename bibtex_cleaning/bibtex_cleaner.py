@@ -186,8 +186,40 @@ def save_json_file(filename, data):
 def extract_arxiv_id(text):
     if not text: return None
     pattern = r'(\d{4}\.\d{4,5}|[a-z\-\.]+\/\d{7})'
-    match = re.search(pattern, text)
+    match = re.search(pattern, str(text))
     return match.group(1) if match else None
+
+def extract_arxiv_id_version(text):
+    """
+    Return (base_id, version) from text mentioning an arXiv id, with version ''
+    when none is pinned:  'arXiv:2302.11474v2' -> ('2302.11474', '2').
+    """
+    m = re.search(r'(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})(?:v(\d+))?', str(text or ''))
+    if not m:
+        return None, ''
+    return m.group(1), m.group(2) or ''
+
+# Every field that may carry an arXiv id.  howpublished and note matter for
+# entries that record the preprint nowhere else, e.g.
+#     @misc{..., howpublished = {arXiv:2302.11474v2}, ...}
+_ARXIV_ID_SOURCES = ('eprint', 'journal', 'url', 'howpublished', 'note', 'doi')
+
+def entry_arxiv_id_version(entry):
+    """
+    Find an entry's arXiv id and, if any field pins one, its version.  A source
+    naming a version wins, so a bare eprint does not hide the v2 recorded in
+    howpublished.
+    """
+    found = None
+    for field in _ARXIV_ID_SOURCES:
+        aid, version = extract_arxiv_id_version(entry.get(field, ''))
+        if not aid:
+            continue
+        if found is None:
+            found = aid
+        if version:
+            return aid, version
+    return found, ''
 
 # An arXiv identifier: 2401.12345, 2401.12345v2, math.NA/0703012, cs/0703012
 _ARXIV_ID_PAT = r'(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z\-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)'
@@ -1259,30 +1291,23 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
 
         # --- A. Conversion Logic (@misc -> @article) ---
         if entry.get('ENTRYTYPE', '').lower() == 'misc':
-            url = entry.get('url', '')
-            doi = entry.get('doi', '')
-            eprint = entry.get('eprint', '')
-            archiveprefix = entry.get('archiveprefix', '')
-            is_arxiv_misc = (
-                'arxiv' in url.lower() or
-                'arxiv' in doi.lower() or
-                'arxiv' in archiveprefix.lower() or
-                bool(extract_arxiv_id(eprint))
-            )
-            if is_arxiv_misc:
-                arxiv_id = (extract_arxiv_id(eprint) or
-                            extract_arxiv_id(doi) or
-                            extract_arxiv_id(url))
-                if arxiv_id:
-                    entry['ENTRYTYPE'] = 'article'
-                    entry['journal'] = (
-                        f"arXiv preprint \\href{{http://arxiv.org/abs/{arxiv_id}}}"
-                        f"{{arXiv:{arxiv_id}}}"
-                    )
-                    for field in _ARXIV_FIELDS:
-                        entry.pop(field, None)
-                    arxiv_count += 1
-                    is_arxiv = True
+            # The id may sit in any of these; howpublished and note are the
+            # only record for some entries.
+            mentions_arxiv = any(
+                'arxiv' in str(entry.get(f, '')).lower()
+                for f in ('url', 'doi', 'archiveprefix', 'howpublished', 'note'))
+            arxiv_id, version = entry_arxiv_id_version(entry)
+            if arxiv_id and (mentions_arxiv or entry.get('eprint')):
+                vid = f'{arxiv_id}v{version}' if version else arxiv_id
+                entry['ENTRYTYPE'] = 'article'
+                entry['journal'] = (
+                    f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                    f"{{arXiv:{vid}}}"
+                )
+                for field in _ARXIV_FIELDS:
+                    entry.pop(field, None)
+                arxiv_count += 1
+                is_arxiv = True
 
         # --- A2. ArXiv Detection ---
         # Only the journal/url fields indicate the entry ITSELF is an arXiv
@@ -1293,18 +1318,23 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             if 'arxiv' in entry.get('journal', '').lower() or \
                'arxiv' in entry.get('url', '').lower():
                 is_arxiv = True
+            elif 'arxiv' in str(entry.get('howpublished', '')).lower() \
+                    and not entry.get('journal') and not entry.get('booktitle'):
+                # howpublished names arXiv and there is no real venue, so this
+                # is the preprint itself, not a published paper that merely
+                # cross-references one.
+                is_arxiv = True
 
         # --- A3. ArXiv Journal Reformatting ---
         # Catches @article entries with a raw arXiv journal string (no \href)
         # e.g. journal = {arXiv:1911.05858 [cs, math]}
         if is_arxiv and r'\href' not in entry.get('journal', ''):
-            arxiv_id = (extract_arxiv_id(entry.get('eprint', '')) or
-                        extract_arxiv_id(entry.get('url', '')) or
-                        extract_arxiv_id(entry.get('journal', '')))
+            arxiv_id, version = entry_arxiv_id_version(entry)
             if arxiv_id:
+                vid = f'{arxiv_id}v{version}' if version else arxiv_id
                 entry['journal'] = (
-                    f"arXiv preprint \\href{{http://arxiv.org/abs/{arxiv_id}}}"
-                    f"{{arXiv:{arxiv_id}}}"
+                    f"arXiv preprint \\href{{http://arxiv.org/abs/{vid}}}"
+                    f"{{arXiv:{vid}}}"
                 )
                 for field in _ARXIV_FIELDS:
                     entry.pop(field, None)
