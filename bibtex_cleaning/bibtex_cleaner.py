@@ -698,6 +698,25 @@ def is_focs(entry):
     return ('foundations of computer science' in bt_lower or
             re.search(r'\bfocs\b', bt_lower) is not None)
 
+def strip_braces_outside_math(text):
+    """
+    Remove BibTeX case-protection braces while leaving everything inside $...$
+    untouched.  Braces in math are LaTeX syntax -- \\operatorname{tr}, x_{ij},
+    \\frac{a}{b} -- and dropping them corrupts the formula, turning
+    {$\\operatorname{tr}(f(A))$} into {$\\operatornametr(f(A))$}.
+    """
+    out = []
+    in_math = False
+    for ch in str(text):
+        if ch == '$':
+            in_math = not in_math
+            out.append(ch)
+        elif ch in '{}' and not in_math:
+            continue
+        else:
+            out.append(ch)
+    return ''.join(out)
+
 def tokenize_words(text):
     """Split text into words, but keep $...$ math spans as single tokens."""
     tokens = []
@@ -1016,7 +1035,7 @@ def process_title_interactive(title, rules_dict):
 
     # Part A: Main Title
     raw_main = parts[0].strip()
-    clean_main = raw_main.replace('{', '').replace('}', '')
+    clean_main = strip_braces_outside_math(raw_main)
     main_words = tokenize_words(clean_main)
 
     proc_main_words, main_updated = process_word_list(main_words, rules_dict, clean_main)
@@ -1025,7 +1044,7 @@ def process_title_interactive(title, rules_dict):
     # Part B: Subtitle
     if len(parts) > 1:
         raw_sub = parts[1].strip()
-        clean_sub = raw_sub.replace('{', '').replace('}', '')
+        clean_sub = strip_braces_outside_math(raw_sub)
         sub_tokens = tokenize_words(clean_sub)
 
         if sub_tokens:
