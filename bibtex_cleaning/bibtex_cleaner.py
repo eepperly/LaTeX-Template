@@ -1277,20 +1277,22 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
     # --- Pre-pass: one batched arXiv lookup for every preprint ---
     arxiv_info = {}
     if online:
-        ids = [i for i in (extract_arxiv_id(str(e.get('journal', '')))
-                           or extract_arxiv_id(str(e.get('eprint', '')))
-                           for e in bib_database.entries
-                           if entry_is_arxiv(e)) if i]
-        if ids:
-            print(f"Looking up {len(set(map(arxiv_key, ids)))} arXiv "
-                  f"preprint(s) online...")
-            arxiv_info = fetch_arxiv_info(ids)
-            newer = sum(1 for e in bib_database.entries if entry_is_arxiv(e)
-                        for k in [arxiv_key(extract_arxiv_id(str(e.get('journal', ''))) or '')]
-                        if k in arxiv_info
-                        and arxiv_info[k]['version'] != arxiv_version_of(e))
+        # Scan every field that can hold an id, not just the journal: this runs
+        # before @misc entries are converted, so an id sitting only in eprint
+        # or howpublished would otherwise be missed.
+        wanted = {}
+        for e in bib_database.entries:
+            aid, version = entry_arxiv_id_version(e)
+            if aid:
+                wanted.setdefault(arxiv_key(aid), version)
+        if wanted:
+            print(f"Looking up {len(wanted)} arXiv preprint(s) online...")
+            arxiv_info = fetch_arxiv_info(wanted.keys())
+            newer = sum(1 for k, have in wanted.items()
+                        if k in arxiv_info and arxiv_info[k]['version']
+                        and arxiv_info[k]['version'] != have)
             pubs = sum(1 for v in arxiv_info.values() if v['doi'])
-            print(f"  {len(arxiv_info)} found; {newer} have a newer version, "
+            print(f"  {len(arxiv_info)} found; {newer} newer than this file, "
                   f"{pubs} report a published DOI.")
 
     print("Scanning bibliography...")
@@ -1364,6 +1366,10 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             gentry = global_lookup(global_index, entry)
             handled = False
 
+            # What --online found for this preprint, if anything
+            lookup_id = extract_arxiv_id(entry.get('journal', ''))
+            info = arxiv_info.get(arxiv_key(lookup_id)) if lookup_id else None
+
             # Consult caches unless the user demanded a fresh check of every
             # arXiv entry.  Global bib wins: it is shared across projects.
             if not force_arxiv_checks:
@@ -1400,13 +1406,20 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                                 f"{{arXiv:{vid}}}"
                             )
 
+            # A cache answering "nothing to do" must not hide a newer version
+            # that arXiv is reporting -- surfacing those is the point of
+            # --online.  Checked after the caches have had their say, so an
+            # entry a cache already brought up to date is not asked about.
+            if handled and is_arxiv and info:
+                if info['doi'] or (info['version']
+                                   and info['version'] != arxiv_version_of(entry)):
+                    handled = False
+
             if not handled:
                 print(f"\nEntry '{entry_id}': {entry.get('title', 'No Title')}")
 
                 # With --online, offer what arXiv reports as the default answer
                 suggestion = None          # ('bibtex', text) or ('version', '3')
-                aid = extract_arxiv_id(entry.get('journal', ''))
-                info = arxiv_info.get(arxiv_key(aid)) if aid else None
                 if info:
                     have = arxiv_version_of(entry)
                     if info['doi']:
