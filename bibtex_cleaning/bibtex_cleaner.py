@@ -1431,15 +1431,23 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                             for line in fetched.splitlines():
                                 print('    ' + line)
                             suggestion = ('bibtex', fetched)
-                    if suggestion is None and info['version'] \
-                            and info['version'] != have:
-                        print(f"  arXiv is now at v{info['version']}"
-                              + (f"; this entry says v{have}" if have else ''))
-                        suggestion = ('version', info['version'])
+                    if suggestion is None and info['version']:
+                        if info['version'] != have:
+                            print(f"  arXiv is now at v{info['version']}"
+                                  + (f"; this entry says v{have}" if have else ''))
+                            suggestion = ('version', info['version'])
+                        else:
+                            # Nothing to change, but say so: a bare prompt
+                            # looks the same as a lookup that failed.
+                            print(f"  arXiv confirms v{have} is the latest.")
+                            suggestion = ('keep', have)
+                elif online:
+                    print(f"  arXiv had no record of {lookup_id}.")
 
                 if suggestion:
-                    what = ('the published version above' if suggestion[0] == 'bibtex'
-                            else f'v{suggestion[1]}')
+                    what = {'bibtex': 'the published version above',
+                            'keep': f'v{suggestion[1]}, unchanged',
+                            'version': f'v{suggestion[1]}'}[suggestion[0]]
                     print(f"Options: Enter to accept {what}, another version number, a")
                     print("pasted BibTeX entry (starting with '@'), or 's' to leave unversioned.")
                 else:
