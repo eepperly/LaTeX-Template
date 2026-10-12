@@ -183,10 +183,43 @@ def save_json_file(filename, data):
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4, sort_keys=True)
 
+# Old-style arXiv ids are <archive>/YYMMNNN, and the archive comes from a fixed
+# list.  Matching any lowercase word before /NNNNNNN also catches identifiers
+# from other services -- Project Euclid's euclid.cmp/1104286, for one -- which
+# arXiv then rejects outright, taking the whole batched lookup down with it.
+_ARXIV_ARCHIVES = (
+    'astro-ph', 'cond-mat', 'cs', 'gr-qc', 'hep-ex', 'hep-lat', 'hep-ph',
+    'hep-th', 'math-ph', 'math', 'nlin', 'nucl-ex', 'nucl-th', 'physics',
+    'quant-ph', 'q-bio', 'q-fin', 'stat', 'chao-dyn', 'adap-org', 'alg-geom',
+    'cmp-lg', 'comp-gas', 'dg-ga', 'funct-an', 'mtrl-th', 'patt-sol', 'q-alg',
+    'solv-int', 'supr-con', 'acc-phys', 'ao-sci', 'atom-ph', 'bayes-an',
+    'chem-ph', 'plasm-ph',
+)
+# A new-style id is YYMM.NNNNN, so the month must be 01-12 and the year no
+# earlier than 07 (arXiv adopted the scheme in April 2007).  Without those
+# bounds -- and the lookaround keeping a match from starting or ending inside
+# a longer number -- the pattern fires inside ordinary DOIs: 10.1145/2488608
+# .2488620 yields "8608.24886", which is then looked up and reported missing.
+# Longest archive first, so math-ph is preferred over math.
+_ARXIV_ID_RE = re.compile(
+    # Not starting inside a longer number, but "arXiv.2403.14606" is fine
+    r'(?<!\d)(?<!\d\.)'
+    # 0704-1412 used four sequence digits, 1501 onward uses five.  Encoding
+    # that rejects DOIs such as 10.1098/rsta.2009.0161, where "2009.0161"
+    # has a plausible year and month but the wrong number of digits for it.
+    r'((?:0[7-9]|1[0-4])(?:0[1-9]|1[0-2])\.\d{4}'
+    r'|(?:1[5-9]|2\d)(?:0[1-9]|1[0-2])\.\d{5}'
+    r'|(?:' + '|'.join(sorted(_ARXIV_ARCHIVES, key=len, reverse=True)) +
+    r')(?:\.[A-Za-z]{2})?/\d{7})'
+    r'(?!\d)'
+    # A version is digits not followed by more digits or a dot, so a DOI
+    # pasted where the version belongs (…1207.6365v10.1145/…) is not read
+    # as "version 10".
+    r'(?:v(\d+)(?![\d.]))?')
+
 def extract_arxiv_id(text):
     if not text: return None
-    pattern = r'(\d{4}\.\d{4,5}|[a-z\-\.]+\/\d{7})'
-    match = re.search(pattern, str(text))
+    match = _ARXIV_ID_RE.search(str(text))
     return match.group(1) if match else None
 
 def extract_arxiv_id_version(text):
@@ -194,7 +227,7 @@ def extract_arxiv_id_version(text):
     Return (base_id, version) from text mentioning an arXiv id, with version ''
     when none is pinned:  'arXiv:2302.11474v2' -> ('2302.11474', '2').
     """
-    m = re.search(r'(\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})(?:v(\d+))?', str(text or ''))
+    m = _ARXIV_ID_RE.search(str(text or ''))
     if not m:
         return None, ''
     return m.group(1), m.group(2) or ''
@@ -203,6 +236,21 @@ def extract_arxiv_id_version(text):
 # entries that record the preprint nowhere else, e.g.
 #     @misc{..., howpublished = {arXiv:2302.11474v2}, ...}
 _ARXIV_ID_SOURCES = ('eprint', 'journal', 'url', 'howpublished', 'note', 'doi')
+
+def entry_arxiv_ids(entry):
+    """
+    Every distinct arXiv id mentioned anywhere in an entry.  The pre-pass asks
+    about all of them, so a later lookup keyed off whichever field survived
+    processing still finds its answer.
+    """
+    ids = []
+    for field in _ARXIV_ID_SOURCES:
+        aid, _ = extract_arxiv_id_version(entry.get(field, ''))
+        if aid:
+            key = arxiv_key(aid)
+            if key not in ids:
+                ids.append(key)
+    return ids
 
 def entry_arxiv_id_version(entry):
     """
@@ -319,26 +367,50 @@ def fetch_arxiv_info(arxiv_ids, chunk=100):
     """
     found = {}
     ids = [i for i in dict.fromkeys(arxiv_key(i) for i in arxiv_ids) if i]
-    for start in range(0, len(ids), chunk):
-        batch = ids[start:start + chunk]
-        query = urllib.parse.urlencode({'id_list': ','.join(batch),
-                                        'max_results': str(len(batch))})
+
+    def query(batch):
+        """Parsed results for one request, or None if the request itself failed."""
+        q = urllib.parse.urlencode({'id_list': ','.join(batch),
+                                    'max_results': str(len(batch))})
         try:
-            xml = _http_get(f'{_ARXIV_API}?{query}')
-        except Exception as exc:
-            print(f"Warning: arXiv lookup failed ({exc}); continuing without it.")
-            return found
+            xml = _http_get(f'{_ARXIV_API}?{q}')
+        except Exception:
+            return None
+        out = {}
         for block in re.split(r'<entry>', xml)[1:]:
             m = re.search(r'<id>\s*https?://arxiv\.org/abs/(\S+?)v(\d+)\s*</id>', block)
             if not m:
                 continue
             doi = re.search(r'<arxiv:doi[^>]*>([^<]+)</arxiv:doi>', block)
             ref = re.search(r'<arxiv:journal_ref[^>]*>([^<]+)</arxiv:journal_ref>', block)
-            found[arxiv_key(m.group(1))] = {
+            out[arxiv_key(m.group(1))] = {
                 'version': m.group(2),
                 'doi': doi.group(1).strip() if doi else '',
                 'journal_ref': ' '.join(ref.group(1).split()) if ref else '',
             }
+        return out
+
+    def run(batch):
+        """
+        Query a batch, halving it on failure.  arXiv rejects an entire request
+        when one id in it is unacceptable, so without this a single bad id --
+        an identifier from another service that merely looks like an arXiv one
+        -- would lose every other result as well.
+        """
+        result = query(batch)
+        if result is not None:
+            found.update(result)
+            return
+        if len(batch) == 1:
+            print(f"Warning: arXiv would not accept id '{batch[0]}'; skipped.")
+            return
+        mid = len(batch) // 2
+        run(batch[:mid])
+        time.sleep(1)
+        run(batch[mid:])
+
+    for start in range(0, len(ids), chunk):
+        run(ids[start:start + chunk])
         if start + chunk < len(ids):
             time.sleep(3)          # arXiv asks for a 3 s gap between requests
     return found
@@ -798,10 +870,12 @@ def entry_is_arxiv(entry):
             'arxiv' in str(entry.get('url', '')).lower())
 
 def arxiv_version_of(entry):
-    """Return an arXiv entry's version number (e.g. '2'), or '' if unversioned."""
-    m = re.search(r'arXiv:(?:\d{4}\.\d{4,5}|[a-z\-\.]+/\d{7})v(\d+)',
-                  str(entry.get('journal', '')))
-    return m.group(1) if m else ''
+    """
+    Return an arXiv entry's version number (e.g. '2'), or '' if unversioned.
+    Shares _ARXIV_ID_RE with the extractors so all three agree on what counts
+    as an id and a version.
+    """
+    return extract_arxiv_id_version(entry.get('journal', ''))[1]
 
 def apply_global_entry(entry, gentry):
     """Replace an entry's fields with the global entry's, keeping the local key."""
