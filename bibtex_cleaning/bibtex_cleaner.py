@@ -12,6 +12,7 @@ import os
 import time
 import urllib.request
 import urllib.parse
+import unicodedata
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -593,12 +594,31 @@ def _alpha_letters(last_names):
     else:  # 5+ authors
         return ''.join(s[0].upper() for s in clean[:3] if s) + '+'
 
+def entry_year(entry, default=''):
+    """
+    The four-digit year, taken from whatever the field actually holds.  A year
+    is often written {{2001}}, which reaches us as "{2001}"; ranges such as
+    "2001--2002" and forms like "2001, in press" also occur.  Reading the
+    field verbatim put those characters straight into generated cite keys.
+    """
+    m = re.search(r'(\d{4})', str(entry.get('year', '')))
+    return m.group(1) if m else default
+
+def safe_key(text):
+    """
+    Strip anything a BibTeX cite key must not contain.  Decomposing first means
+    letters survive as ASCII rather than being deleted: the ligature in
+    "efficient" becomes "ffi" instead of vanishing, and "uber" keeps its u.
+    """
+    decomposed = unicodedata.normalize('NFKD', str(text))
+    ascii_only = ''.join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r'[^A-Za-z0-9_:.+-]', '', ascii_only)
+
 def make_alpha_key(entry):
     """Generate an alpha-style key: Che25, CE25, CET25, CETW25, CET+25."""
     last_names = _author_last_names(entry.get('author', ''))
-    year = entry.get('year', '????')
-    year2 = year[-2:] if len(year) >= 2 else year
-    return _alpha_letters(last_names) + year2
+    year = entry_year(entry, '????')
+    return safe_key(_alpha_letters(last_names) + year[-2:])
 
 _TITLE_SKIP = {'a', 'an', 'the', 'on', 'in', 'of', 'for', 'to', 'and', 'or', 'with', 'via', 'by'}
 
@@ -606,11 +626,11 @@ def make_namedateword_key(entry):
     """Generate a namedateword key: chen2025randomly."""
     last_names = _author_last_names(entry.get('author', ''))
     last = re.sub(r'[^A-Za-z]', '', last_names[0]).lower() if last_names else 'unknown'
-    year = entry.get('year', '')
+    year = entry_year(entry)
     title_clean = re.sub(r'[{}\\$]', '', entry.get('title', ''))
     words = [w.lower() for w in re.split(r'\W+', title_clean) if w]
     word = next((w for w in words if w not in _TITLE_SKIP), words[0] if words else 'unknown')
-    return f'{last}{year}{word}'
+    return safe_key(f'{last}{year}{word}')
 
 def standardize_keys(entries, style):
     """
@@ -809,10 +829,17 @@ def tokenize_words(text):
     return tokens
 
 def normalize_title(title):
-    """Normalize a title for duplicate detection."""
+    """
+    Normalize a title for duplicate detection.  Decomposing first collapses
+    typographic variants of the same word -- the ligature in "Eﬃcient" and
+    plain "Efficient", or an accented letter and its ASCII spelling -- which
+    otherwise read as two different papers.
+    """
     if not title:
         return ""
-    t = re.sub(r'[{}]', '', title)   # Remove BibTeX braces
+    t = unicodedata.normalize('NFKD', str(title))
+    t = ''.join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r'[{}]', '', t)       # Remove BibTeX braces
     t = t.lower()
     t = re.sub(r'[^\w\s]', '', t)    # Remove punctuation
     t = ' '.join(t.split())           # Collapse whitespace
