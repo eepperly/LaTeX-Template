@@ -516,32 +516,61 @@ def string_def_keys(string_defs):
             keys.append(m.group(1))
     return keys
 
+def conference_of(venue):
+    """
+    Which of the known conferences a venue string names, or None.  The
+    detectors are looked up at call time because they are defined further
+    down the file.
+    """
+    probe = {'booktitle': str(venue)}
+    for name, test in (('soda', is_soda), ('stoc', is_stoc), ('focs', is_focs)):
+        if test(probe):
+            return name
+    return None
+
 def apply_journal_abbreviations(bib_database, string_defs):
     """
-    Replace journal names that match one of the file's own @STRING values
-    with the macro itself, so the output reads `journal = simax`.
+    Replace a journal or booktitle that matches one of the file's own @STRING
+    values with the macro itself, so the output reads `journal = simax` or
+    `booktitle = soda`.
 
-    Call this only after the global bibliography has been written: the
-    global copy must keep the journal spelled out, since the macro means
-    nothing outside the file that defines it.
+    Journals are matched on their significant words.  A booktitle is also
+    matched on which conference it names, because the canonical spelling and a
+    macro's abbreviation share too few words for that test -- "Proceedings of
+    the Thirty-Seventh Annual ACM-SIAM Symposium on Discrete Algorithms" has
+    nine, "Proc. Annu. ACM-SIAM Symp. Discrete Algorithms" has seven.
+
+    Call this only after the global bibliography has been written: the global
+    copy must keep the venue spelled out, since a macro means nothing outside
+    the file whose @STRING block defines it.
     """
     defined = [(k, bib_database.strings[k]) for k in string_def_keys(string_defs)
                if k in bib_database.strings]
     if not defined:
         return 0
 
+    # Macro per conference, for collapsing a canonical proceedings name
+    macro_for_conference = {}
+    for key, value in defined:
+        conf = conference_of(value)
+        if conf:
+            macro_for_conference.setdefault(conf, key)
+
     count = 0
     for entry in bib_database.entries:
-        journal = entry.get('journal')
-        # A non-string value is already a macro expression; leave it be.
-        if not isinstance(journal, str) or not journal.strip():
-            continue
-        for key, value in defined:
-            if journals_match(journal, value):
-                entry['journal'] = BibDataStringExpression(
-                    [BibDataString(bib_database, key)])
+        for field in ('journal', 'booktitle'):
+            value = entry.get(field)
+            # A non-string value is already a macro expression; leave it be.
+            if not isinstance(value, str) or not value.strip():
+                continue
+
+            macro = next((k for k, v in defined if journals_match(value, v)), None)
+            if macro is None and field == 'booktitle':
+                macro = macro_for_conference.get(conference_of(value))
+            if macro:
+                entry[field] = BibDataStringExpression(
+                    [BibDataString(bib_database, macro)])
                 count += 1
-                break
     return count
 
 # Venues whose URL is itself the canonical record of a paper.  PMLR mints no
@@ -744,12 +773,29 @@ def format_soda_booktitle(year):
     return (f'Proceedings of the {ordinal_word(edition)} Annual '
             f'ACM-SIAM Symposium on Discrete Algorithms')
 
+
+# A venue may be spelled out or abbreviated -- "Symposium on Discrete
+# Algorithms" and "Symp. Discrete Algorithms" name the same conference -- so
+# detection matches the distinctive words by prefix rather than by substring.
+def venue_names(venue, needles):
+    """True if `needles` appear in order among a venue's words, prefix-matched."""
+    words = journal_words(venue)
+    pos = 0
+    for needle in needles:
+        while pos < len(words):
+            w = words[pos]
+            pos += 1
+            if w.startswith(needle) or needle.startswith(w):
+                break
+        else:
+            return False
+    return True
+
 def is_soda(entry):
     """Fuzzy-match a bib entry as a SODA paper."""
-    bt = entry.get('booktitle', '')
-    bt_lower = bt.lower()
-    return ('discrete algorithms' in bt_lower or
-            re.search(r'\bsoda\b', bt_lower) is not None)
+    bt = str(entry.get('booktitle', ''))
+    return (venue_names(bt, ('discrete', 'algorithm')) or
+            re.search(r'\bsoda\b', bt.lower()) is not None)
 
 def numeric_ordinal(n):
     """Return a numeric ordinal string: 49 → '49th', 51 → '51st', etc."""
@@ -771,10 +817,9 @@ def format_stoc_booktitle(year):
 
 def is_stoc(entry):
     """Fuzzy-match a bib entry as a STOC paper."""
-    bt = entry.get('booktitle', '')
-    bt_lower = bt.lower()
-    return ('theory of computing' in bt_lower or
-            re.search(r'\bstoc\b', bt_lower) is not None)
+    bt = str(entry.get('booktitle', ''))
+    return (venue_names(bt, ('theory', 'comput')) or
+            re.search(r'\bstoc\b', bt.lower()) is not None)
 
 _FOCS_FIRST_YEAR = 1960
 
@@ -785,10 +830,9 @@ def format_focs_booktitle(year):
 
 def is_focs(entry):
     """Fuzzy-match a bib entry as a FOCS paper."""
-    bt = entry.get('booktitle', '')
-    bt_lower = bt.lower()
-    return ('foundations of computer science' in bt_lower or
-            re.search(r'\bfocs\b', bt_lower) is not None)
+    bt = str(entry.get('booktitle', ''))
+    return (venue_names(bt, ('found', 'comput', 'sci')) or
+            re.search(r'\bfocs\b', bt.lower()) is not None)
 
 def strip_braces_outside_math(text):
     """
@@ -1042,7 +1086,7 @@ def prompt_with_default(prompt, default=''):
     finally:
         readline.set_startup_hook()
 
-def process_word_list(words, rules_dict, context_str):
+def process_word_list(words, rules_dict, context_str, openers=()):
     processed = []
     updated = False
     header_printed = False
@@ -1096,7 +1140,7 @@ def process_word_list(words, rules_dict, context_str):
         updated = True
         return decision
 
-    for word in words:
+    for idx, word in enumerate(words):
         if '$' in word:
             # Math expressions are wrapped in braces so LaTeX preserves their
             # casing; rules prompts don't apply inside math mode.
@@ -1104,6 +1148,20 @@ def process_word_list(words, rules_dict, context_str):
             continue
 
         core = word.strip(',')
+
+        if idx in openers and core:
+            # Opens a sentence.  Capitalize and protect it, so a style that
+            # lowercases titles cannot undo it -- unless the author wrote it
+            # starting lower case, which is taken as deliberate.
+            if core[0].isupper():
+                new_core = '{' + core[0].upper() + core[1:] + '}'
+                processed.append(word.replace(core, new_core, 1))
+                continue
+            if core[0].islower():
+                processed.append(word)
+                continue
+            # Starts with a digit or symbol: fall through to the usual rules.
+
         pieces = _COMPOUND_SPLIT_RE.split(core)
 
         if len(pieces) > 1:
@@ -1128,43 +1186,35 @@ def process_word_list(words, rules_dict, context_str):
 # 3. Logic: Title Splitting
 # ==========================================
 
+def ends_sentence(token):
+    """
+    True if a token closes a sentence, so the next word opens one.  A colon or
+    question mark is unambiguous; a period is only treated as sentence-ending
+    after at least three characters, which keeps initials and short
+    abbreviations ("A.", "Jr.") from splitting a title.
+    """
+    stripped = str(token).rstrip('"\')]}')
+    if stripped.endswith((':', '?')):
+        return True
+    if stripped.endswith('.'):
+        core = re.sub(r'[^\w]', '', stripped.rstrip('.'))
+        return len(core) >= 3
+    return False
+
 def process_title_interactive(title, rules_dict):
     if not title:
         return "", False
 
-    parts = title.split(':', 1)
+    clean = strip_braces_outside_math(title.strip())
+    tokens = tokenize_words(clean)
 
-    # Part A: Main Title
-    raw_main = parts[0].strip()
-    clean_main = strip_braces_outside_math(raw_main)
-    main_words = tokenize_words(clean_main)
+    # Words opening a sentence, i.e. following a period, colon or question
+    # mark.  The title's own first word is excluded: no style lowercases it,
+    # so it needs no protection.
+    openers = {i for i in range(1, len(tokens)) if ends_sentence(tokens[i - 1])}
 
-    proc_main_words, main_updated = process_word_list(main_words, rules_dict, clean_main)
-    new_main = " ".join(proc_main_words)
-
-    # Part B: Subtitle
-    if len(parts) > 1:
-        raw_sub = parts[1].strip()
-        clean_sub = strip_braces_outside_math(raw_sub)
-        sub_tokens = tokenize_words(clean_sub)
-
-        if sub_tokens:
-            protected_word = sub_tokens[0]  # Protect first word of subtitle
-            remainder_tokens = sub_tokens[1:]
-
-            context_snippet = ' '.join(sub_tokens)
-            proc_remainder, sub_updated = process_word_list(remainder_tokens, rules_dict, context_snippet)
-
-            if proc_remainder:
-                new_sub = f"{protected_word} {' '.join(proc_remainder)}"
-            else:
-                new_sub = protected_word
-
-            return f"{new_main}: {new_sub}", (main_updated or sub_updated)
-        else:
-            return f"{new_main}:", main_updated
-    else:
-        return new_main, main_updated
+    processed, updated = process_word_list(tokens, rules_dict, clean, openers)
+    return ' '.join(processed), updated
 
 # ==========================================
 # 4. Logic: Deduplication
