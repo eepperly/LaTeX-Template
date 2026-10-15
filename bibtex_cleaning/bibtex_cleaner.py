@@ -1700,16 +1700,21 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             apply_doi_to_entry(entry, cleaned)
 
         # --- C2. Conference-Specific Booktitle Cleanup ---
-        try:
-            year = int(entry.get('year', ''))
-            if is_soda(entry):
-                entry['booktitle'] = format_soda_booktitle(year)
-            elif is_stoc(entry):
-                entry['booktitle'] = format_stoc_booktitle(year)
-            elif is_focs(entry):
-                entry['booktitle'] = format_focs_booktitle(year)
-        except (ValueError, TypeError):
-            pass
+        # A booktitle written as an @STRING macro is the author's own choice of
+        # venue name, defined in one place on purpose.  Rewriting it to the
+        # canonical form would replace the macro with literal text and lose
+        # that, so such entries are left alone.
+        if (entry_id, 'booktitle') not in abbrev_map:
+            try:
+                year = int(entry.get('year', ''))
+                if is_soda(entry):
+                    entry['booktitle'] = format_soda_booktitle(year)
+                elif is_stoc(entry):
+                    entry['booktitle'] = format_stoc_booktitle(year)
+                elif is_focs(entry):
+                    entry['booktitle'] = format_focs_booktitle(year)
+            except (ValueError, TypeError):
+                pass
 
         # --- D. Interactive Title Logic ---
         if 'title' in entry:
