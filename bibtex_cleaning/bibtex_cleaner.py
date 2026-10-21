@@ -587,6 +587,78 @@ def abbreviate_venue(venue, abbreviations, conference=False):
                     return abbrev
     return None
 
+FULL_NAMES_FILE = os.path.join(_SHARED_DIR, 'full_names.json')
+
+# Seeds full_names.json on first run; the file is the real list.
+DEFAULT_FULL_NAMES = [
+    'SIAM Journal on Matrix Analysis and Applications',
+    'SIAM Journal on Scientific Computing',
+    'SIAM Journal on Numerical Analysis',
+    'SIAM Journal on Computing',
+    'Linear Algebra and its Applications',
+    'Numerische Mathematik',
+    'Mathematics of Computation',
+    'Journal of Machine Learning Research',
+    'Journal of the ACM',
+    'Foundations of Computational Mathematics',
+    'Advances in Neural Information Processing Systems',
+    'ACM Transactions on Mathematical Software',
+]
+
+def expand_venue(venue, full_names):
+    """
+    The spelled-out name for an abbreviated venue, or None if none is known.
+    The longest match wins, since a partly-expanded spelling can also match
+    and the fullest form is the one wanted here.
+    """
+    hits = [f for f in full_names if journals_match(venue, f)]
+    return max(hits, key=len) if hits else None
+
+def apply_venue_expansions(bib_database, full_names, abbrev_map, year_of=None):
+    """
+    Undo abbreviation: rewrite an abbreviated journal or booktitle to its
+    spelled-out name.  A conference is spelled out from its canonical formatter
+    when the year is known, which gets the edition number right; otherwise the
+    known-names list is used.
+
+    Unlike abbreviating, this does replace an @STRING macro with literal text,
+    because a macro stands for an abbreviation and leaving it would defeat the
+    request.
+    """
+    count = 0
+    for entry in bib_database.entries:
+        year = None
+        try:
+            year = int(entry_year(entry))
+        except (TypeError, ValueError):
+            pass
+
+        for field in ('journal', 'booktitle'):
+            value = entry.get(field)
+            if isinstance(value, BibDataStringExpression):
+                value = value.get_value()      # expand the macro and go on
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if 'arxiv' in value.lower():
+                continue
+
+            spelled = None
+            if field == 'booktitle' and year is not None:
+                conf = conference_of(value)
+                if conf == 'soda':
+                    spelled = format_soda_booktitle(year)
+                elif conf == 'stoc':
+                    spelled = format_stoc_booktitle(year)
+                elif conf == 'focs':
+                    spelled = format_focs_booktitle(year)
+            if spelled is None:
+                spelled = expand_venue(value, full_names)
+
+            if spelled and spelled != entry.get(field):
+                entry[field] = spelled
+                count += 1
+    return count
+
 def apply_venue_abbreviations(bib_database, abbreviations, abbrev_map):
     """
     Rewrite every journal and booktitle to its standard abbreviation.  Fields
@@ -1446,7 +1518,7 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                    global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False,
                    rules_file=DEFAULT_RULES_FILE, online=False,
-                   abbreviations=False, strip_fields=()):
+                   venue_style=None, strip_fields=()):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -1481,14 +1553,21 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
             f if t == '*' else f'@{t} {f}'
             for t, fs in add_strip_fields({}, strip_fields).items() for f in fs)))
 
-    abbrev_list = []
-    if abbreviations:
+    abbrev_list, full_list = [], []
+    if venue_style == 'abbrev':
         if not os.path.exists(ABBREVIATIONS_FILE):
             save_json_file(ABBREVIATIONS_FILE, DEFAULT_ABBREVIATIONS)
             print(f"Created '{ABBREVIATIONS_FILE}' with default abbreviations.")
         loaded = load_json_file(ABBREVIATIONS_FILE, default=DEFAULT_ABBREVIATIONS)
         abbrev_list = loaded if isinstance(loaded, list) else DEFAULT_ABBREVIATIONS
         print(f"Abbreviating venues using {len(abbrev_list)} known forms.")
+    elif venue_style == 'full':
+        if not os.path.exists(FULL_NAMES_FILE):
+            save_json_file(FULL_NAMES_FILE, DEFAULT_FULL_NAMES)
+            print(f"Created '{FULL_NAMES_FILE}' with default full names.")
+        loaded = load_json_file(FULL_NAMES_FILE, default=DEFAULT_FULL_NAMES)
+        full_list = loaded if isinstance(loaded, list) else DEFAULT_FULL_NAMES
+        print(f"Spelling venues out using {len(full_list)} known names.")
     per_type = {t: sorted(f) for t, f in remove_map.items() if t != '*'}
     if per_type:
         print('Removing per type: ' + '; '.join(
@@ -1866,9 +1945,11 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         # venue name, defined in one place on purpose.  Rewriting it to the
         # canonical form would replace the macro with literal text and lose
         # that, so such entries are left alone.
-        if ((entry_id, 'booktitle') not in abbrev_map
-                and not abbreviations
-                and not venue_is_abbreviated(entry.get('booktitle', ''))):
+        if (venue_style != 'abbrev'
+                and ((entry_id, 'booktitle') not in abbrev_map
+                     or venue_style == 'full')
+                and (venue_style == 'full'
+                     or not venue_is_abbreviated(entry.get('booktitle', '')))):
             try:
                 year = int(entry.get('year', ''))
                 if is_soda(entry):
@@ -1944,10 +2025,16 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
     # Deliberately after the global bib has been written: the global copy
     # keeps journals spelled out, because a macro is meaningless outside
     # the file whose @STRING block defines it.
-    n_std = apply_venue_abbreviations(bib_database, abbrev_list, abbrev_map)
-    if n_std:
-        print(f"Abbreviated {n_std} venue name(s).")
-    n_abbrev = apply_journal_abbreviations(bib_database, string_defs)
+    if venue_style == 'full':
+        n_std = apply_venue_expansions(bib_database, full_list, abbrev_map)
+        if n_std:
+            print(f"Spelled out {n_std} venue name(s).")
+        n_abbrev = 0        # re-collapsing to a macro would undo the expansion
+    else:
+        n_std = apply_venue_abbreviations(bib_database, abbrev_list, abbrev_map)
+        if n_std:
+            print(f"Abbreviated {n_std} venue name(s).")
+        n_abbrev = apply_journal_abbreviations(bib_database, string_defs)
     if n_abbrev:
         print(f"Applied @STRING journal abbreviations to {n_abbrev} entr"
               f"{'y' if n_abbrev == 1 else 'ies'}.")
@@ -2110,15 +2197,26 @@ if __name__ == "__main__":
              'BibTeX is fetched from doi.org and offered as the replacement. '
              'Press Enter to accept, or answer as usual. Requires network '
              'access; any failure just falls back to asking.')
-    parser.add_argument(
-        '--abbreviations', action='store_true',
-        help='Rewrite every journal and conference to its standard abbreviation, '
-             'e.g. "SIAM Journal on Matrix Analysis and Applications" to '
-             '"SIAM J. Matrix Anal. Appl.". Known forms are listed in '
-             f'{ABBREVIATIONS_FILE}, which is created on first use; add to '
-             'it to cover more venues. Fields written as an @STRING macro '
-             'are left as the macro. Without this flag a venue keeps whatever '
-             'form it already has -- neither abbreviated nor expanded.')
+    venues = parser.add_mutually_exclusive_group()
+    venues.add_argument(
+        '--abbreviations', dest='venue_style', action='store_const',
+        const='abbrev',
+        help='Rewrite every journal and conference to its standard '
+             'abbreviation, e.g. "SIAM Journal on Matrix Analysis and '
+             'Applications" to "SIAM J. Matrix Anal. Appl.". Known forms are '
+             f'listed in {ABBREVIATIONS_FILE}, created on first use. A field '
+             'written as an @STRING macro is left as the macro.')
+    venues.add_argument(
+        '--no-abbreviations', dest='venue_style', action='store_const',
+        const='full',
+        help='The reverse: spell every abbreviated journal and conference '
+             'out in full, e.g. "Numer. Math." to "Numerische Mathematik". '
+             f'Known names are listed in {FULL_NAMES_FILE}, created on first '
+             'use; conferences are spelled out from their edition number '
+             'instead. This one does replace an @STRING macro with literal '
+             'text, since a macro stands for an abbreviation. Note that it '
+             'spells names out rather than merely switching --abbreviations '
+             'off, which is what passing neither flag does.')
     parser.add_argument(
         '--force_arxiv_checks', action='store_true',
         help='Sweep the bibliography for work that may have appeared since '
@@ -2139,6 +2237,7 @@ if __name__ == "__main__":
         '--dupes', metavar='FILE',
         help='Where to write the duplicate log, one "kept: removed, removed" '
              'line per group (default: <input>_duplicates.txt).')
+    parser.set_defaults(venue_style=None)
     args = parser.parse_args()
 
     out_path = args.output if args.output else 'clean_output.bib'
@@ -2149,5 +2248,5 @@ if __name__ == "__main__":
                    force_arxiv_checks=args.force_arxiv_checks,
                    rules_file=args.rules_file,
                    online=args.online,
-                   abbreviations=args.abbreviations,
+                   venue_style=args.venue_style,
                    strip_fields=args.strip_fields)
