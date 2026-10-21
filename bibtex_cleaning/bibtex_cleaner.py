@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
@@ -13,8 +13,6 @@ import time
 import urllib.request
 import urllib.parse
 import unicodedata
-
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # All shared state lives at one fixed location, NOT next to the script.
 # Copies of this script placed in other directories therefore read and write
