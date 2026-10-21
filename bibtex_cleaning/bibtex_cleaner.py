@@ -514,6 +514,83 @@ def string_def_keys(string_defs):
             keys.append(m.group(1))
     return keys
 
+ABBREVIATIONS_FILE = os.path.join(_SHARED_DIR, 'abbreviations.json')
+
+# Seeds abbreviations.json on first run; the file is the real list.
+DEFAULT_ABBREVIATIONS = [
+    'Proc. Annu. ACM-SIAM Symp. Discrete Algorithms',
+    'Proc. Annu. ACM Symp. Theory Comput.',
+    'Proc. Annu. IEEE Symp. Found. Comput. Sci.',
+    'SIAM J. Matrix Anal. Appl.',
+    'SIAM J. Sci. Comput.',
+    'SIAM J. Numer. Anal.',
+    'SIAM J. Comput.',
+    'SIAM Rev.',
+    'Linear Algebra Appl.',
+    'Numer. Math.',
+    'Math. Comp.',
+    'J. Mach. Learn. Res.',
+    'Found. Comput. Math.',
+    'Adv. Neural Inf. Process. Syst.',
+    'ACM Trans. Math. Software',
+    'Comm. Pure Appl. Math.',
+]
+
+# A venue is already abbreviated if some word of three or more letters is cut
+# short by a period: "Proc. Annu. ACM Symp. Theory Comput." yes, "Proceedings
+# of the Thirty-Seventh Annual ACM-SIAM Symposium..." no.
+_ABBREV_MARKER_RE = re.compile(r'\b[A-Za-z]{3,}\.')
+
+def venue_is_abbreviated(venue):
+    return _ABBREV_MARKER_RE.search(str(venue)) is not None
+
+def abbreviate_venue(venue, abbreviations, conference=False):
+    """
+    The standard abbreviation for a venue, or None if none is known.  Matching
+    reuses journals_match, so a full name, a differently-punctuated
+    abbreviation and the abbreviation itself all resolve to the same entry.
+
+    For a conference, which conference it names is tried as well: the canonical
+    proceedings title and its abbreviation share too few words for
+    journals_match to pair them.
+    """
+    for abbrev in abbreviations:
+        if journals_match(venue, abbrev):
+            return abbrev
+    if conference:
+        conf = conference_of(venue)
+        if conf:
+            for abbrev in abbreviations:
+                if conference_of(abbrev) == conf:
+                    return abbrev
+    return None
+
+def apply_venue_abbreviations(bib_database, abbreviations, abbrev_map):
+    """
+    Rewrite every journal and booktitle to its standard abbreviation.  Fields
+    holding an @STRING macro are left alone: a macro is already the author's
+    chosen short form, and replacing it with literal text would lose it.
+    """
+    if not abbreviations:
+        return 0
+    count = 0
+    for entry in bib_database.entries:
+        eid = entry.get('ID', '')
+        for field in ('journal', 'booktitle'):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if (eid, field) in abbrev_map:        # came from a macro
+                continue
+            if 'arxiv' in value.lower():          # not a journal name
+                continue
+            abbrev = abbreviate_venue(value, abbreviations,
+                                      conference=(field == 'booktitle'))
+            if abbrev and abbrev != value:
+                entry[field] = abbrev
+                count += 1
+    return count
+
 def conference_of(venue):
     """
     Which of the known conferences a venue string names, or None.  The
@@ -792,7 +869,7 @@ def venue_names(venue, needles):
 def is_soda(entry):
     """Fuzzy-match a bib entry as a SODA paper."""
     bt = str(entry.get('booktitle', ''))
-    return (venue_names(bt, ('discrete', 'algorithm')) or
+    return (venue_names(bt, ('symp', 'discrete', 'algorithm')) or
             re.search(r'\bsoda\b', bt.lower()) is not None)
 
 def numeric_ordinal(n):
@@ -816,7 +893,7 @@ def format_stoc_booktitle(year):
 def is_stoc(entry):
     """Fuzzy-match a bib entry as a STOC paper."""
     bt = str(entry.get('booktitle', ''))
-    return (venue_names(bt, ('theory', 'comput')) or
+    return (venue_names(bt, ('symp', 'theory', 'comput')) or
             re.search(r'\bstoc\b', bt.lower()) is not None)
 
 _FOCS_FIRST_YEAR = 1960
@@ -829,7 +906,7 @@ def format_focs_booktitle(year):
 def is_focs(entry):
     """Fuzzy-match a bib entry as a FOCS paper."""
     bt = str(entry.get('booktitle', ''))
-    return (venue_names(bt, ('found', 'comput', 'sci')) or
+    return (venue_names(bt, ('symp', 'found', 'comput', 'sci')) or
             re.search(r'\bfocs\b', bt.lower()) is not None)
 
 def strip_braces_outside_math(text):
@@ -1346,7 +1423,8 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 
 def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                    global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False,
-                   rules_file=DEFAULT_RULES_FILE, online=False):
+                   rules_file=DEFAULT_RULES_FILE, online=False,
+                   abbreviations=False):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -1375,6 +1453,15 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         print(f"Created '{REMOVE_FIELDS_FILE}' with default fields to remove.")
     remove_map = normalize_remove_fields(
         load_json_file(REMOVE_FIELDS_FILE, default=DEFAULT_REMOVE_FIELDS))
+
+    abbrev_list = []
+    if abbreviations:
+        if not os.path.exists(ABBREVIATIONS_FILE):
+            save_json_file(ABBREVIATIONS_FILE, DEFAULT_ABBREVIATIONS)
+            print(f"Created '{ABBREVIATIONS_FILE}' with default abbreviations.")
+        loaded = load_json_file(ABBREVIATIONS_FILE, default=DEFAULT_ABBREVIATIONS)
+        abbrev_list = loaded if isinstance(loaded, list) else DEFAULT_ABBREVIATIONS
+        print(f"Abbreviating venues using {len(abbrev_list)} known forms.")
     per_type = {t: sorted(f) for t, f in remove_map.items() if t != '*'}
     if per_type:
         print('Removing per type: ' + '; '.join(
@@ -1752,7 +1839,9 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         # venue name, defined in one place on purpose.  Rewriting it to the
         # canonical form would replace the macro with literal text and lose
         # that, so such entries are left alone.
-        if (entry_id, 'booktitle') not in abbrev_map:
+        if ((entry_id, 'booktitle') not in abbrev_map
+                and not abbreviations
+                and not venue_is_abbreviated(entry.get('booktitle', ''))):
             try:
                 year = int(entry.get('year', ''))
                 if is_soda(entry):
@@ -1828,6 +1917,9 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
     # Deliberately after the global bib has been written: the global copy
     # keeps journals spelled out, because a macro is meaningless outside
     # the file whose @STRING block defines it.
+    n_std = apply_venue_abbreviations(bib_database, abbrev_list, abbrev_map)
+    if n_std:
+        print(f"Abbreviated {n_std} venue name(s).")
     n_abbrev = apply_journal_abbreviations(bib_database, string_defs)
     if n_abbrev:
         print(f"Applied @STRING journal abbreviations to {n_abbrev} entr"
@@ -1992,6 +2084,15 @@ if __name__ == "__main__":
              'Press Enter to accept, or answer as usual. Requires network '
              'access; any failure just falls back to asking.')
     parser.add_argument(
+        '--abbreviations', action='store_true',
+        help='Rewrite every journal and conference to its standard abbreviation, '
+             'e.g. "SIAM Journal on Matrix Analysis and Applications" to '
+             '"SIAM J. Matrix Anal. Appl.". Known forms are listed in '
+             f'{ABBREVIATIONS_FILE}, which is created on first use; add to '
+             'it to cover more venues. Fields written as an @STRING macro '
+             'are left as the macro. Without this flag a venue keeps whatever '
+             'form it already has -- neither abbreviated nor expanded.')
+    parser.add_argument(
         '--force_arxiv_checks', action='store_true',
         help='Sweep the bibliography for work that may have appeared since '
              'you last looked. Asks about every arXiv preprint even when the '
@@ -2013,4 +2114,5 @@ if __name__ == "__main__":
                    global_bib=args.global_bib,
                    force_arxiv_checks=args.force_arxiv_checks,
                    rules_file=args.rules_file,
-                   online=args.online)
+                   online=args.online,
+                   abbreviations=args.abbreviations)
