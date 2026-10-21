@@ -159,6 +159,28 @@ def normalize_remove_fields(config):
     print(f"Warning: could not read '{REMOVE_FIELDS_FILE}'; using defaults.")
     return normalize_remove_fields(DEFAULT_REMOVE_FIELDS)
 
+def add_strip_fields(remove_map, specs):
+    """
+    Fold --strip-field values into the removal map.  A bare name applies to
+    every entry type; TYPE:FIELD applies to that type only; commas separate
+    several in one value.  ID and ENTRYTYPE stay protected, since
+    fields_to_remove subtracts them whatever the map says.
+    """
+    for spec in specs or ():
+        for item in str(spec).split(','):
+            item = item.strip()
+            if not item:
+                continue
+            if ':' in item:
+                etype, field = item.split(':', 1)
+                key = etype.strip().lower() or '*'
+            else:
+                key, field = '*', item
+            field = field.strip().lower()
+            if field:
+                remove_map.setdefault(key, set()).add(field)
+    return remove_map
+
 def fields_to_remove(remove_map, entry_type):
     """Fields to strip from an entry of this type: the '*' set plus its own."""
     own = remove_map.get(str(entry_type or '').lower(), set())
@@ -1424,7 +1446,7 @@ def deduplicate_entries(bib_database, ignored_duplicates, ignore_file, ignore_da
 def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
                    global_bib=DEFAULT_GLOBAL_BIB, force_arxiv_checks=False,
                    rules_file=DEFAULT_RULES_FILE, online=False,
-                   abbreviations=False):
+                   abbreviations=False, strip_fields=()):
     try:
         sections = parse_sections(input_file)
         string_defs = extract_string_defs(input_file)
@@ -1453,6 +1475,11 @@ def process_bibtex(input_file, output_file, dupes_file=None, standardize=None,
         print(f"Created '{REMOVE_FIELDS_FILE}' with default fields to remove.")
     remove_map = normalize_remove_fields(
         load_json_file(REMOVE_FIELDS_FILE, default=DEFAULT_REMOVE_FIELDS))
+    if strip_fields:
+        add_strip_fields(remove_map, strip_fields)
+        print('Also stripping: ' + ', '.join(sorted(
+            f if t == '*' else f'@{t} {f}'
+            for t, fs in add_strip_fields({}, strip_fields).items() for f in fs)))
 
     abbrev_list = []
     if abbreviations:
@@ -2102,6 +2129,13 @@ if __name__ == "__main__":
              '"submitted". Anything you update is remembered and written '
              'back to the global cache.')
     parser.add_argument(
+        '--strip-field', dest='strip_fields', action='append',
+        default=[], metavar='FIELD',
+        help='Remove this field as well, on top of whatever remove_fields.json '
+             'lists. Repeatable, and several may be comma-separated. A bare '
+             'name applies to every entry; TYPE:FIELD to one type, as in '
+             '--strip-field note --strip-field inproceedings:editor.')
+    parser.add_argument(
         '--dupes', metavar='FILE',
         help='Where to write the duplicate log, one "kept: removed, removed" '
              'line per group (default: <input>_duplicates.txt).')
@@ -2115,4 +2149,5 @@ if __name__ == "__main__":
                    force_arxiv_checks=args.force_arxiv_checks,
                    rules_file=args.rules_file,
                    online=args.online,
-                   abbreviations=args.abbreviations)
+                   abbreviations=args.abbreviations,
+                   strip_fields=args.strip_fields)
