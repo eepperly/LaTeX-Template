@@ -1184,6 +1184,13 @@ def write_global_bib(path, entries):
 # e.g. non-{Hermitian}, quasi-{Newton}, {Monte}-{Carlo}.
 _COMPOUND_SPLIT_RE = re.compile(r'([-–—])')
 
+# Punctuation that merely follows or precedes a word rather than belonging to
+# it.  Stripped before the word is looked up, shown or braced, so "eigensolver:"
+# is the word "eigensolver" and braces come out as {eigensolver}: rather than
+# {eigensolver:}.  Hyphens are absent on purpose: they join words and are
+# handled by _COMPOUND_SPLIT_RE.
+_WORD_PUNCT = ',:;.?!'
+
 # What may be answered when asked about a word.  Any combination is allowed:
 #   y  brace-protect it            n  leave it unprotected (the default)
 #   c  capitalize the first letter l  lowercase the whole word
@@ -1272,7 +1279,7 @@ def process_word_list(words, rules_dict, context_str, openers=()):
             # Math is brace-protected as it stands; casing rules do not apply.
             plan.append(('math', word))
             continue
-        core = word.strip(',')
+        core = word.strip(_WORD_PUNCT)
         if idx in openers and core and (core[0].isupper() or core[0].islower()):
             plan.append(('opener', word, core))
             continue
@@ -1287,7 +1294,7 @@ def process_word_list(words, rules_dict, context_str, openers=()):
         pieces = item[3]
         for pi in range(0, len(pieces), 2):
             piece = pieces[pi]
-            key = clean_word_key(piece.strip(','))
+            key = clean_word_key(piece.strip(_WORD_PUNCT))
             if key and not key.isdigit():
                 questions.append((si, pi, key, piece))
 
