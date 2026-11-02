@@ -1190,7 +1190,7 @@ _COMPOUND_SPLIT_RE = re.compile(r'([-–—])')
 #   m  set it in math mode         e  replace it with text you type
 # so "yc" on 'vendi' gives {Vendi}, "m" on 'n' gives {$n$}, and "ey" asks for
 # replacement text and braces whatever you type.
-_WORD_FLAGS = set('ynclme')
+_WORD_FLAGS = set('ynclme')   # 'b' (back) is handled separately
 
 # A decision is a flag string, optionally followed by ':' and the replacement
 # text supplied for 'e'.  The text keeps its case; the flags do not.
@@ -1256,48 +1256,92 @@ def prompt_with_default(prompt, default=''):
         readline.set_startup_hook()
 
 def process_word_list(words, rules_dict, context_str, openers=()):
-    processed = []
+    """
+    Decide what to do with each word of a title.
+
+    Questions are planned up front rather than asked inline, so answering 'b'
+    can step back to the previous question that was actually put to the user --
+    including back into an earlier compound word, whose components are asked
+    about separately.
+    """
+    # --- Plan one slot per token -------------------------------------------
+    # ('math', word) | ('opener', word, core) | ('pieces', word, core, pieces)
+    plan = []
+    for idx, word in enumerate(words):
+        if '$' in word:
+            # Math is brace-protected as it stands; casing rules do not apply.
+            plan.append(('math', word))
+            continue
+        core = word.strip(',')
+        if idx in openers and core and (core[0].isupper() or core[0].islower()):
+            plan.append(('opener', word, core))
+            continue
+        plan.append(('pieces', word, core, _COMPOUND_SPLIT_RE.split(core)))
+
+    # --- The words that need a decision, in the order they are reached -----
+    # (slot, piece index, rules key, the text shown to the user)
+    questions = []
+    for si, item in enumerate(plan):
+        if item[0] != 'pieces':
+            continue
+        pieces = item[3]
+        for pi in range(0, len(pieces), 2):
+            piece = pieces[pi]
+            key = clean_word_key(piece.strip(','))
+            if key and not key.isdigit():
+                questions.append((si, pi, key, piece))
+
+    # --- Ask them, allowing 'b' to go back ---------------------------------
+    answers = {}          # (slot, piece index) -> decision string
+    asked = []            # indices into `questions` actually put to the user
     updated = False
     header_printed = False
+    i = 0
 
-    def decide(token):
-        """
-        Return the flag string recording what to do with one word ('' to leave
-        it alone), or None when there is nothing to decide (empty or purely
-        numeric).  The rules file is consulted first; a word it has never seen
-        is prompted for exactly once.
-        """
-        nonlocal updated, header_printed
-        key = clean_word_key(token)
-        if not key or key.isdigit():
-            return None
+    while i < len(questions):
+        si, pi, key, token = questions[i]
+
         if key in rules_dict:
-            return decision_flags(rules_dict[key])
+            answers[(si, pi)] = decision_flags(rules_dict[key])
+            i += 1
+            continue
 
         if not header_printed:
             print(f"\n--- Title Context: ... {context_str} ... ---")
             print('    y=braces  n=none  c=Capitalize  l=lowercase  '
-                  'm=math $..$  e=edit text   (combine, e.g. yc)')
+                  'm=math $..$  e=edit text  b=back   (combine, e.g. yc)')
             header_printed = True
 
-        while True:
-            response = input(f"Wrap '{token}' in braces {{}}? [y/N]: ").strip().lower()
-            if response == 'yes':
-                response = 'y'
-            elif response == 'no':
-                response = 'n'
-            if response == '' or set(response) <= _WORD_FLAGS:
-                flags = response.replace('n', '')   # 'n' only means "no braces"
-                break
-            print('    Please use any combination of y n c l m e '
-                  '(y=braces, c=Capitalize, l=lowercase, m=math, e=edit).')
+        response = input(f"Wrap '{token}' in braces {{}}? [y/N]: ").strip().lower()
+        if response == 'yes':
+            response = 'y'
+        elif response == 'no':
+            response = 'n'
 
+        if response == 'b':
+            if not asked:
+                print('    Nothing earlier in this title to go back to.')
+                continue
+            prev = asked.pop()
+            psi, ppi, pkey, _ = questions[prev]
+            # Forget the answer so the word is put to the user again
+            rules_dict.pop(pkey, None)
+            answers.pop((psi, ppi), None)
+            i = prev
+            continue
+
+        if response != '' and not set(response) <= _WORD_FLAGS:
+            print('    Please use any combination of y n c l m e '
+                  '(y=braces, c=Capitalize, l=lowercase, m=math, e=edit), '
+                  'or b to go back.')
+            continue
+
+        flags = response.replace('n', '')       # 'n' only means "no braces"
         decision = flags
         if 'e' in flags:
             replacement = prompt_with_default(f"    Replace '{token}' with: ",
                                               token).strip()
             if not replacement or replacement == token:
-                # Nothing actually changed; drop the edit but keep other flags
                 decision = flags.replace('e', '')
             else:
                 decision = flags + ':' + replacement
@@ -1306,47 +1350,38 @@ def process_word_list(words, rules_dict, context_str, openers=()):
         # in the shape it has always had; only richer answers need a string.
         rules_dict[key] = (True if decision == 'y'
                            else (False if decision == '' else decision))
+        answers[(si, pi)] = decision
         updated = True
-        return decision
+        asked.append(i)
+        i += 1
 
-    for idx, word in enumerate(words):
-        if '$' in word:
-            # Math expressions are wrapped in braces so LaTeX preserves their
-            # casing; rules prompts don't apply inside math mode.
-            processed.append(f'{{{word}}}')
+    # --- Build the result from the decisions -------------------------------
+    processed = []
+    for si, item in enumerate(plan):
+        if item[0] == 'math':
+            processed.append(f'{{{item[1]}}}')
             continue
 
-        core = word.strip(',')
-
-        if idx in openers and core:
-            # Opens a sentence.  Capitalize and protect it, so a style that
+        if item[0] == 'opener':
+            _, word, core = item
+            # Opens a sentence: capitalize and protect it, so a style that
             # lowercases titles cannot undo it -- unless the author wrote it
             # starting lower case, which is taken as deliberate.
             if core[0].isupper():
                 new_core = '{' + core[0].upper() + core[1:] + '}'
                 processed.append(word.replace(core, new_core, 1))
-                continue
-            if core[0].islower():
+            else:
                 processed.append(word)
-                continue
-            # Starts with a digit or symbol: fall through to the usual rules.
+            continue
 
-        pieces = _COMPOUND_SPLIT_RE.split(core)
-
-        if len(pieces) > 1:
-            # Compound word: each component is decided on its own, so
-            # "non-Hermitian" can come out as non-{Hermitian}.
-            rebuilt = []
-            for i, piece in enumerate(pieces):
-                if i % 2:                      # a separator, kept verbatim
-                    rebuilt.append(piece)
-                else:
-                    rebuilt.append(apply_word_flags(piece, decide(piece)))
-            new_core = ''.join(rebuilt)
-        else:
-            new_core = apply_word_flags(core, decide(core))
-
-        # Re-attach any punctuation that was stripped off the ends
+        _, word, core, pieces = item
+        rebuilt = []
+        for pi, piece in enumerate(pieces):
+            if pi % 2:                          # a separator, kept verbatim
+                rebuilt.append(piece)
+            else:
+                rebuilt.append(apply_word_flags(piece, answers.get((si, pi))))
+        new_core = ''.join(rebuilt)
         processed.append(word.replace(core, new_core, 1) if core else word)
 
     return processed, updated
