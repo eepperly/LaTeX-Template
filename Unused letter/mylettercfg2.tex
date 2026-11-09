@@ -1,0 +1,132 @@
+% This is the configuration file for letters processed with ucsdletter.cls
+% The entries below are used to make the data for the default subhead.
+% By the subhead we mean the block containing the return address, telephone,
+% email and so on. You may use up to 3 columns, \colm{A}, \colm{B} and \colm{C}.
+% Each \colm is made up of an arbitrary number of \itm's.
+% The \itm's will be by default left aligned in the \colm. 
+% To right align a \colm, add [r] after \colm.
+% You do not need to add \<space> after a period in these \itm's.
+%
+% UCSD style gidelines call for subhead to be Times-Roman at 8pt.
+% This is defined in the class file, but may be changed here by uncommenting
+% the next two lines. 
+%\def\subheadfontname{ptmr at 8pt}% 
+%\font\subheadfont=\subheadfontname
+%
+% You should change the \subheadbaselineskip from its default 10pt
+% if you change the size of the subheadfont. Two points larger than fontsize is % typical. UCSD style guidelines call for \subheadbaselineskip to be 10pt.
+%
+%\setlength\subheadbaselineskip{10pt}
+%
+\colm{A}{% UCSD STYLE GUIDELINES SAY ENTRIES HERE SHOULD BE CAPS
+\itm{Assistant Professor Robert J. Webber}
+\itm{Department of Mathematics}
+\itm{9500 Gilman Drive \# 0112}
+\itm{La Jolla, California \ 92093--0112}
+}
+\colm{B}{%
+\itm{EMAIL:}
+\itm{URL:}
+%\itm{ICBM:}
+}
+\colm{C}{%
+\itm{rwebber@ucsd.edu}
+\itm{https://sites.google.com/ucsd.edu/rwebber/}
+%\itm{32${}^{\circ}$ 52' 44'' N, 117${}^{\circ}$ 14' 28'' W}
+}
+% Signature
+% Set your signature as it should appear underneath the letter \Closing line:
+%
+\signature{Robert J. Webber\\ Assistant Professor of Mathematics}
+%
+% By filling out the correct entries above, you will get a subhead conforming
+% to the UCSD style guidelines, and you may ignore the settings below.
+% If you wish to customize your configuration further, read on.
+%
+% Within the subhead, indentation from left and right are controlled by 
+% \subheadlefti and \subheadrighti.
+% Separation between \colm B and \colm C is \subheadcolBCsep
+%\subheadlefti=0pt
+%\subheadrighti=0pt
+\subheadcolBCsep=.1in% use .1in if you have data in both \colB and \colC
+% End of canned subhead
+%
+% The default textwidth of a letter is 6in, with equal margins on left and
+% right.
+% To change the texwidth of the body of your letter, uncomment and change the 
+% following:
+%
+%\setlength\textwidth{5in}
+%
+% To use a seal other than the default seal file, named ucseal, enter name:
+%
+%\def\sealfile{ucsealB} 
+%
+% don't add the extension on the filename---you should have a pdf version for 
+% use in pdftex, an eps version if your TeX generates a dvi intermediary.
+%
+% The top of the logo should print just over .5 inches from the top of the 
+% paper so that the line above the campus names is exactly 1.0in from the
+% top of the paper. If your printer sets the logo too low on the page, decrease
+% this amount accordingly.
+% (Increase it to lower the logo.)
+%
+\setlength\logotop{44pt}
+%
+% The default behavior of the standard letter class is to add glue above and
+% below a short first page, not quite centering it vertically. If you wish to
+% defeat the vertical centering, uncomment the following line:
+%
+\vcenteringfalse
+%
+% The default is to make the subhead a part of the letterhead. 
+% Uncomment the following line to change this, making it print at top of text.
+% It may look strange if you set \subheadinheadfalse without 
+% \vcenteringfalse as well.
+%
+%\subheadinheadfalse
+%
+% If the subhead is part of the letterhead, the default separation is .125in
+% from the bottom of the seal to the top of the subhead.
+% You can change this by uncommenting and completing the following:
+%
+%\setlength\subheadtopsep{.125in}
+%
+%
+% Beginning of custom subhead
+% If you wish to bypass the subhead described above in favor of a custom 
+% subhead, uncomment the \customsubheadtrue line below.
+%
+%\customsubheadtrue
+%
+% You may add your own subhead, by adding the LaTeX code inside the following
+% macro. Whether or not you wish it to print as part of the head or part of the
+% text, the content of \mysubhead should be a \vbox with your data spelled out
+% exactly. If you uncommented \subheadinheadfalse, the \vbox will be inserted
+% at the top of the body of the letter. The code you enter will be wrapped in an
+% \hbox of appropriate size and inserted as instructed.
+% You will have to specify the \baselineskip, as the \baselineskip is set to 0
+% when this box is constructed..
+\def\mysubhead{}
+%
+% End of custom subhead
+%
+% Additional packages and settings
+%
+% (a) Within each address environment, such as in the subhead, the recipient
+% address, signature, cc, encl and labels, the class sets \sfcode`.=1000, so 
+% there is no need to modify the space following a period. For example, you may
+% write Dr. Hancock rather than Dr.\ Hancock within those environments.
+%
+% (b) You may add here any additional packages and settings you wish.
+% The effect is the same as adding them just after the 
+% \documentclass{ucsdletter} line. They will execute before other options chosen
+% in your letter, and may be overwritten by those later settings.
+% You could, for example, select the font to be used in the body of the letter
+% by using an appropriate \usepackage{}, or choose the form of the headings and % footers by a \pagestyle entry. (The default is plain, the other options being
+% headings and empty. 
+\AtEndOfClass{
+\usepackage{mathptmx}% Times Roman text, Symbol math (may use Nimbus clones)
+%\pagestyle{headings}%UCSD style guidelines call for this:
+% other options are plain, empty
+}
